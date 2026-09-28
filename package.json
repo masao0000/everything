@@ -1,0 +1,6 @@
+{
+  "name": "everything",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=18" }
+}
