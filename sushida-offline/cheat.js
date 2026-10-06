@@ -239,7 +239,125 @@
     }
   }
 
+  // ---- 皿数の上限 ----
+  // このゲームは 600 皿に届くとフリーズする(内部エラーになる)ので、手前で自動入力を止める。
+  // 皿数は画面左の看板「○○皿」の数字を OCR で読み取る。
+  const SIGN = { l: 14, r: 98, t: 227, b: 275 }; // 看板の白い部分(500x420 基準)
+  const plates = { count: 0, limit: 580, worker: null, loading: null };
+  const LIMIT_MESSAGE = "システム上限(600皿)に到達しそうなので自動入力をストップしました";
+
+  async function getDigitWorker() {
+    if (plates.worker) return plates.worker;
+    plates.loading ??= (async () => {
+      await getWorker(); // Tesseract 本体の読み込みを共有
+      const w = await Tesseract.createWorker("eng", 1, {
+        workerPath: "vendor/worker.min.js", corePath: "vendor/core", langPath: "vendor/lang", workerBlobURL: false,
+      });
+      await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789" });
+      plates.worker = w;
+      return w;
+    })();
+    return plates.loading;
+  }
+
+  // 看板の数字部分(最後の「皿」の字を除く)を白黒の画像にして返す。看板が無ければ null。
+  function captureSign() {
+    const game = document.querySelector("#gameContainer canvas");
+    if (!game || !game.width) return null;
+    const sx = game.width / 500, sy = game.height / 420;
+    const work = captureSign.work ||= document.createElement("canvas");
+    const wctx = work.getContext("2d", { willReadFrequently: true });
+    work.width = game.width; work.height = game.height;
+    wctx.drawImage(game, 0, 0);
+    const X = (v) => Math.round(v * sx), Y = (v) => Math.round(v * sy);
+    const x0 = X(SIGN.l + 2), y0 = Y(SIGN.t + 3), w = X(SIGN.r - 2) - x0, h = Y(SIGN.b - 3) - y0;
+    const img = wctx.getImageData(x0, y0, w, h), d = img.data;
+    // 看板の四隅付近が白くなければ看板は出ていない
+    const px = (x, y) => { const i = (y * w + x) * 4; return Math.min(d[i], d[i + 1], d[i + 2]); };
+    if ([px(0, 0), px(w - 1, 0), px(0, h - 1), px(w - 1, h - 1)].some((v) => v < 225)) return null;
+    // 黒い文字の列を左右に区切る。最後のかたまりが「皿」
+    const dark = (x) => { for (let y = 0; y < h; y++) { const i = (y * w + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 300) return true; } return false; };
+    const segs = [];
+    for (let x = 0, start = -1; x <= w; x++) {
+      const on = x < w && dark(x);
+      if (on && start < 0) start = x;
+      if (!on && start >= 0) { segs.push([start, x - 1]); start = -1; }
+    }
+    if (segs.length < 2) return null;
+    const a = Math.max(0, segs[0][0] - 3), b = Math.min(w, segs[segs.length - 2][1] + 4);
+    const tmp = document.createElement("canvas");
+    tmp.width = b - a; tmp.height = h;
+    const tctx = tmp.getContext("2d");
+    tctx.putImageData(wctx.getImageData(x0 + a, y0, b - a, h), 0, 0);
+    const out = document.createElement("canvas");
+    const k = UPSCALE / Math.max(sx, sy), pad = 12;
+    out.width = Math.round((b - a) * k) + pad * 2; out.height = Math.round(h * k) + pad * 2;
+    const octx = out.getContext("2d");
+    octx.fillStyle = "#fff"; octx.fillRect(0, 0, out.width, out.height);
+    octx.filter = "grayscale(1) contrast(3)";
+    octx.drawImage(tmp, pad, pad, out.width - pad * 2, out.height - pad * 2);
+    return out;
+  }
+
+  let lastRead = -1;
+  async function plateWatch() {
+    for (;;) {
+      await sleep(700);
+      if (ending || document.hidden) continue;
+      const img = captureSign();
+      if (!img) { if (!captureRomaji()) { plates.count = 0; lastRead = -1; } continue; }
+      // 自動入力中か、ある程度皿が積み上がってから読み始める(OCR の負荷を抑える)
+      if (!auto.on && plates.count === 0 && lastRead < 0 && !plates.worker) continue;
+      try {
+        const w = await getDigitWorker();
+        const { data } = await w.recognize(img);
+        const n = parseInt(data.text.replace(/\D/g, ""), 10);
+        if (!Number.isFinite(n)) continue;
+        // 読み間違い対策: 2回続けて同じくらいの値なら採用
+        if (lastRead >= 0 && Math.abs(n - lastRead) <= 15) {
+          plates.count = n;
+          ui.update();
+          if (n >= plates.limit && auto.on) {
+            auto.on = false;
+            ui.status(LIMIT_MESSAGE);
+            ui.update();
+          }
+        }
+        lastRead = n;
+      } catch (e) { console.error(e); }
+    }
+  }
+
+  // ---- コース終了 ----
+  // ゲーム内時間を一気に早送りして残り時間を 0 にし、通常どおり結果画面まで進める。
+  // (Unity は1フレームで進める時間に上限があるので、終わるまで数秒かかる)
+  const END_SPEED = 60;
+  let ending = false;
+  async function endCourse(doneMessage) {
+    if (ending) return;
+    if (!captureRomaji()) { ui.status("プレイ中のコースがありません"); return; }
+    ending = true;
+    const prevSpeed = scale, prevAuto = auto.on;
+    auto.on = false;
+    setSpeed(END_SPEED);
+    ui.status("コースを終了中…");
+    ui.update();
+    const start = realPerf();
+    let lastBox = start;
+    // 吹き出しが 1.5 秒出てこなくなったら結果画面に移ったとみなす(最大 30 秒)
+    while (realPerf() - start < 30000 && realPerf() - lastBox < 1500) {
+      await nextFrame();
+      if (captureRomaji()) lastBox = realPerf();
+    }
+    setSpeed(prevSpeed);
+    ending = false;
+    plates.count = 0; lastRead = -1;
+    ui.status(doneMessage || (prevAuto ? "コースを終了しました(自動入力はOFFにしました)" : "コースを終了しました"));
+    ui.update();
+  }
+
   function setAuto(on) {
+    if (on && plates.count >= plates.limit) { ui.status(LIMIT_MESSAGE); ui.update(); return; }
     auto.on = on;
     if (on) { ui.status("OCR を準備中…"); autoLoop(); }
     else ui.status("停止中");
@@ -264,6 +382,7 @@
         #cheat-panel button:focus-visible { outline: 2px solid #f5c26b; outline-offset: 2px; }
         #cheat-panel input[type=range] { width: 100%; }
         #cheat-panel .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+        #cheat-panel button.wide { width: 100%; }
         #cheat-panel button.quit { width: 100%; background: #3a2d26; }
         #cheat-panel button.quit.armed { background: #c0392b; border-color: #e5735f; color: #fff; }
         #cheat-panel .note { font-size: 12px; color: #a8957f; line-height: 1.5; margin: 0; }
@@ -291,8 +410,13 @@
           <button type="button" data-v="2">×2</button>
         </div>
       </section>
+      <section>
+        <span class="label">コース</span>
+        <div class="mono" id="ch-plates"></div>
+        <div class="row"><button id="ch-end" type="button" class="wide">このコースを終了</button></div>
+      </section>
       <p class="note">ゲーム画面を一度クリックしてからスペースで開始。ローマ字表示は「設定」でONのままにしてください。ランキング送信は遮断しています。</p>
-      <div class="row"><button id="ch-quit" type="button" class="quit">終了</button></div>`;
+      <div class="row"><button id="ch-quit" type="button" class="quit">アプリを閉じる</button></div>`;
 
     const $ = (id) => document.getElementById(id);
     const autoBtn = $("ch-auto"), delay = $("ch-delay");
@@ -304,14 +428,16 @@
       if (v != null) { setSpeed(v); ui.update(); }
     };
     $("ch-reload").onclick = () => location.reload();
+    $("ch-end").onclick = () => endCourse();
+    plateWatch();
     // 誤って押してもすぐ終わらないよう、3秒以内にもう一度押したら終了する
     const quitBtn = $("ch-quit");
     let quitTimer = 0;
     quitBtn.onclick = () => {
       if (!quitBtn.classList.contains("armed")) {
         quitBtn.classList.add("armed");
-        quitBtn.textContent = "もう一度押すと終了";
-        quitTimer = setTimeout(() => { quitBtn.classList.remove("armed"); quitBtn.textContent = "終了"; }, 3000);
+        quitBtn.textContent = "もう一度押すと閉じます";
+        quitTimer = setTimeout(() => { quitBtn.classList.remove("armed"); quitBtn.textContent = "アプリを閉じる"; }, 3000);
         return;
       }
       clearTimeout(quitTimer);
@@ -329,6 +455,7 @@
       autoBtn.setAttribute("aria-pressed", String(auto.on));
       $("ch-delay-v").textContent = `${auto.delay} ms`;
       $("ch-last").textContent = auto.last ? `読み取り: ${auto.last}` : "";
+      $("ch-plates").textContent = `皿数 ${plates.count}(${plates.limit}皿で自動入力を停止)`;
       for (const b of $("ch-speed").children) b.setAttribute("aria-pressed", String(Number(b.dataset.v) === scale));
     };
     ui.update();
@@ -392,6 +519,8 @@
     set delay(v) { auto.delay = Number(v) || 0; ui.update(); },
     set debug(v) { auto.debug = !!v; },
     onGameError,
+    get plates() { return plates.count; },
+    set plateLimit(v) { plates.limit = Number(v) || 580; ui.update(); },
     captureRomaji,
   };
 })();
