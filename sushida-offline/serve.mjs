@@ -42,6 +42,13 @@ const CSP = [
 
 createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+  // ランキング送信 (cheat.js が sushida.net/php/r.php からここへ向け直す)。
+  // 本物のサーバーも不正な送信には空の 200 を返すので、同じ応答にしてゲームを先に進ませる。
+  if (path === "/php/r.php") {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "text/html; charset=UTF-8" }).end();
+    return;
+  }
   const file = TOOL_FILES[path]
     ? join(ROOT, TOOL_FILES[path])
     : join(SITE, normalize(path).replace(/^([/\\]*\.\.)+/, ""));

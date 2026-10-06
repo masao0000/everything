@@ -8,6 +8,15 @@
   // ---- ドメインチェック回避: Unity は document.URL で sushida.net か判定している ----
   Object.defineProperty(document, "URL", { get: () => "https://sushida.net/play.html" });
 
+  // ---- ランキング送信の差し替え ----
+  // 送信を遮断して通信エラーにすると、ゲーム内部で例外が起きて止まることがある。
+  // sushida.net 宛ての通信はローカルサーバー(serve.mjs)に向け、空の応答を返させる。
+  const realOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (typeof url === "string") url = url.replace(/^https?:\/\/(www\.)?sushida\.net\//, "/");
+    return realOpen.call(this, method, url, ...rest);
+  };
+
   // ---- 画面読み取り用: WebGL の描画バッファを保持させる ----
   const realGetContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
@@ -102,10 +111,10 @@
     const y0 = Math.round(ROMAJI_TOP * sy), h = Math.round((ROMAJI_BOTTOM - ROMAJI_TOP) * sy), w = r - l;
     const src = wctx.getImageData(l, y0, w, h);
     const d = src.data;
-    let restX = Infinity;
+    let restX = Infinity, white = 0;
     for (let i = 0; i < d.length; i += 4) {
       const lum = Math.min(d[i], d[i + 1], d[i + 2]);
-      if (lum > 175) restX = Math.min(restX, (i / 4) % w);
+      if (lum > 175) { restX = Math.min(restX, (i / 4) % w); white++; }
       const v = lum > 85 ? 0 : 255; // 白もグレーも文字として扱う
       d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
     }
@@ -120,7 +129,16 @@
     const ictx = img.getContext("2d");
     ictx.fillStyle = "#fff"; ictx.fillRect(0, 0, img.width, img.height);
     ictx.drawImage(tmp, pad, pad, img.width - pad * 2, img.height - pad * 2);
-    return { img, restX: pad + restX * k };
+    // restX: 未入力部分の開始位置(OCR 画像上) / white: 未入力の白い画素数 / l, r: 吹き出しの左右端
+    return { img, restX: pad + restX * k, white, l, r };
+  }
+
+  // before を撮ったあと画面が進んだか。1文字打つと白い文字がグレーに変わり、次の単語に
+  // 変わっても白い画素数が変わるので、白い画素数か吹き出しの幅が変われば進んだとみなす。
+  function progressed(before, after) {
+    if (!after) return true;
+    if (Math.abs(after.l - before.l) > 2 || Math.abs(after.r - before.r) > 2) return true;
+    return Math.abs(after.white - before.white) > 3;
   }
 
   const ALLOWED = /[^a-z0-9\-,.!?]/g; // WHITELIST 以外の文字
@@ -142,6 +160,57 @@
     document.dispatchEvent(new KeyboardEvent("keypress", { key: ch, charCode: code, keyCode: code, which: code, bubbles: true }));
   }
 
+  const nextFrame = () => new Promise((r) => realRaf(() => r()));
+
+  // 画面が進むまで最大 maxFrames フレーム待つ。進んだら true。
+  async function waitProgress(before, maxFrames) {
+    for (let i = 0; i < maxFrames; i++) {
+      await nextFrame();
+      if (progressed(before, captureRomaji())) return true;
+    }
+    return false;
+  }
+
+  // OCR が同じ文字を読み間違え続けると先に進めないので、1文字ずつ試して進んだら止める。
+  // 間違ったキーはミス扱いになるだけで、ゲームは正しいキーが来るまで待ってくれる。
+  const FALLBACK_ORDER = "aiueonkstrhmyzgdbpwjcfvlqx-,.!?0123456789";
+  async function bruteForce(cap, guess) {
+    for (const ch of new Set(guess + FALLBACK_ORDER)) {
+      if (!auto.on) return false;
+      sendKey(ch);
+      auto.typed++;
+      if (await waitProgress(cap, 6)) return true;
+    }
+    return false;
+  }
+
+  async function autoStep(worker) {
+    const cap = captureRomaji();
+    if (!cap) { await sleep(40); return; }
+    const { data } = await worker.recognize(cap.img, {}, { text: true, blocks: true });
+    const { all, rest: text } = remainingText(data, cap.restX);
+    if (auto.debug) console.log("[auto] ocr", all, "->", text);
+    if (!auto.on) return;
+    auto.last = all;
+    for (const ch of text) {
+      if (!auto.on) return;
+      sendKey(ch);
+      auto.typed++;
+      if (auto.delay) await sleep(auto.delay);
+    }
+    ui.update();
+
+    // 打ったのに画面が進まない = 先頭の文字を読み間違えている
+    if (!(await waitProgress(cap, 10))) {
+      const after = captureRomaji();
+      if (!after) return;
+      if (auto.debug) console.log("[auto] stuck, brute force from", JSON.stringify(text));
+      ui.status("読み間違い → 1文字ずつ試行中");
+      await bruteForce(after, text.slice(0, 1));
+      ui.status("自動入力中");
+    }
+  }
+
   async function autoLoop() {
     if (auto.busy) return;
     auto.busy = true;
@@ -149,26 +218,19 @@
       const worker = await getWorker();
       ui.status("自動入力中");
       while (auto.on) {
-        const cap = captureRomaji();
-        if (!cap) { await sleep(40); continue; }
-        const { data } = await worker.recognize(cap.img, {}, { text: true, blocks: true });
-        const { all, rest: text } = remainingText(data, cap.restX);
-        if (auto.debug) console.log("[auto] ocr", all, "->", text);
-        if (!text || !auto.on) { await sleep(40); continue; }
-        auto.last = all;
-        for (const ch of text) {
-          if (!auto.on) break;
-          sendKey(ch);
-          auto.typed++;
-          if (auto.delay) await sleep(auto.delay);
+        try {
+          await autoStep(worker);
+        } catch (e) {
+          // 1回の失敗で止めずに続ける
+          console.error(e);
+          ui.status("エラー(続行中): " + e.message);
+          await sleep(300);
         }
-        ui.update();
-        await sleep(30); // 画面の更新を待つ
       }
     } catch (e) {
       console.error(e);
       auto.on = false;
-      ui.status("エラー: " + e.message);
+      ui.status("OCR を起動できません: " + e.message);
     } finally {
       auto.busy = false;
       ui.update();
@@ -183,7 +245,7 @@
   }
 
   // ---- 操作パネル ----
-  const ui = { status() {}, update() {} };
+  const ui = { status() {}, update() {}, gameError() {} };
 
   function buildPanel() {
     const root = document.getElementById("cheat-panel");
@@ -209,6 +271,10 @@
         <label class="label" for="ch-delay">1文字あたりの間隔 <span id="ch-delay-v" class="mono"></span></label>
         <input id="ch-delay" type="range" min="0" max="200" step="5">
         <div class="mono" id="ch-status">停止中</div>
+        <div id="ch-error" hidden>
+          <p class="note" id="ch-error-msg"></p>
+          <div class="row"><button id="ch-reload" type="button">ゲームを再起動</button></div>
+        </div>
         <div class="mono" id="ch-last"></div>
       </section>
       <section>
@@ -232,7 +298,15 @@
       const v = e.target.closest("button")?.dataset.v;
       if (v != null) { setSpeed(v); ui.update(); }
     };
+    $("ch-reload").onclick = () => location.reload();
     ui.status = (s) => { $("ch-status").textContent = s; };
+    ui.gameError = (msg) => {
+      console.warn("[game error]", msg);
+      // ゲーム本体の例外だけ知らせる(音声の読み込み失敗など無害なものは無視)
+      if (!/DISABLE_EXCEPTION_CATCHING|abort/i.test(String(msg))) return;
+      $("ch-error-msg").textContent = "ゲーム内でエラーが発生しました。画面が動かなくなったら再起動してください。";
+      $("ch-error").hidden = false;
+    };
     ui.update = () => {
       autoBtn.textContent = auto.on ? "ON" : "OFF";
       autoBtn.setAttribute("aria-pressed", String(auto.on));
@@ -252,6 +326,7 @@
     set auto(v) { setAuto(!!v); },
     set delay(v) { auto.delay = Number(v) || 0; ui.update(); },
     set debug(v) { auto.debug = !!v; },
+    onGameError(msg) { ui.gameError(msg); },
     captureRomaji,
   };
 })();

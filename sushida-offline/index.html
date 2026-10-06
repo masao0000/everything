@@ -20,7 +20,13 @@
   <div id="cheat-panel"></div>
 </div>
 <script>
-  window.gameInstance = UnityLoader.instantiate("gameContainer", "files/v1_3/Web.json", { onProgress: UnityProgress });
+  // ゲーム内の例外で alert が出て止まらないよう、エラーはチートパネルに表示する
+  const onGameError = (msg) => { window.sushiCheat?.onGameError(msg); return true; };
+  window.gameInstance = UnityLoader.instantiate("gameContainer", "files/v1_3/Web.json", {
+    onProgress: UnityProgress,
+    Module: { errorhandler: onGameError },
+  });
+  if (gameInstance.Module) gameInstance.Module.errorhandler = onGameError;
   window.addEventListener("load", () => {
     const c = document.querySelector("canvas");
     if (c) c.ondragstart = () => false;
