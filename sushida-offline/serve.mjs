@@ -3,7 +3,7 @@
 //   --open を付けると、起動後にブラウザで開く
 import { createServer } from "node:http";
 import { exec } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,6 +48,18 @@ const server = createServer(async (req, res) => {
     console.log("終了ボタンが押されたので終了します。");
     server.close();
     setTimeout(() => process.exit(0), 200);
+    return;
+  }
+  // ゲーム内エラーの記録 (原因調査用)。error-log.txt に追記する。
+  if (path === "/__log" && req.method === "POST" && req.headers["x-sushida-log"] === "1") {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (c) => { if (body.length < 65536) body += c; });
+    req.on("end", async () => {
+      await appendFile(join(ROOT, "error-log.txt"), body.slice(0, 65536) + "\n\n").catch(() => {});
+      console.log("ゲーム内エラーを error-log.txt に記録しました。");
+      res.writeHead(204).end();
+    });
     return;
   }
   // ランキング送信 (cheat.js が sushida.net/php/r.php からここへ向け直す)。

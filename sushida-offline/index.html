@@ -20,8 +20,10 @@
   <div id="cheat-panel"></div>
 </div>
 <script>
-  // ゲーム内の例外で alert が出て止まらないよう、エラーはチートパネルに表示する
+  // ゲーム内の例外で alert を出さず、チートパネル側で処理する(自動復帰・ログ記録)。
+  // この種の例外はメッセージにスタック情報がなく errorhandler を通らないので、ハンドラーごと差し替える。
   const onGameError = (msg) => { window.sushiCheat?.onGameError(msg); return true; };
+  UnityLoader.Error.handler = (e) => onGameError(e && (e.message || e.error) || e);
   window.gameInstance = UnityLoader.instantiate("gameContainer", "files/v1_3/Web.json", {
     onProgress: UnityProgress,
     Module: { errorhandler: onGameError },

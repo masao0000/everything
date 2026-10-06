@@ -41,7 +41,9 @@
   performance.now = tick;
   Date.now = () => Math.floor(tick() + dateOffset);
   const realRaf = window.requestAnimationFrame.bind(window);
-  window.requestAnimationFrame = (cb) => realRaf(() => cb(tick()));
+  // lastGameRaf: ゲームが最後に次のフレームを予約した時刻(メインループが止まっていないかの判定用)
+  let lastGameRaf = realPerf();
+  window.requestAnimationFrame = (cb) => { lastGameRaf = realPerf(); return realRaf(() => cb(tick())); };
 
   function setSpeed(v) { tick(); scale = Math.max(0, Number(v) || 0); }
 
@@ -316,11 +318,10 @@
       quit();
     };
     ui.status = (s) => { $("ch-status").textContent = s; };
-    ui.gameError = (msg) => {
-      console.warn("[game error]", msg);
-      // ゲーム本体の例外だけ知らせる(音声の読み込み失敗など無害なものは無視)
-      if (!/DISABLE_EXCEPTION_CATCHING|abort/i.test(String(msg))) return;
-      $("ch-error-msg").textContent = "ゲーム内でエラーが発生しました。画面が動かなくなったら再起動してください。";
+    ui.gameError = (err, alive) => {
+      $("ch-error-msg").textContent = alive
+        ? `ゲーム内エラーを ${err.count} 回検出し、自動で復帰しました。動きがおかしいときは再起動してください。`
+        : "ゲーム内エラーで止まり、自動で復帰できませんでした。再起動してください。";
       $("ch-error").hidden = false;
     };
     ui.update = () => {
@@ -331,6 +332,44 @@
       for (const b of $("ch-speed").children) b.setAttribute("aria-pressed", String(Number(b.dataset.v) === scale));
     };
     ui.update();
+  }
+
+  // ---- ゲーム内の例外からの自動復帰 ----
+  // この Unity ビルドは C# の例外を捕まえられず、例外が起きたフレームでメインループごと止まる。
+  // 止まっていたら emscripten の resumeMainLoop でループを再開させる。
+  // 原因調査のため、エラー内容はサーバー経由で error-log.txt に記録する。
+  const errors = { count: 0, recovered: 0 };
+  const loadedAt = realPerf();
+
+  function logToServer(text) {
+    fetch("/__log", { method: "POST", headers: { "X-Sushida-Log": "1" }, body: text }).catch(() => {});
+  }
+
+  function onGameError(msg) {
+    msg = String(msg || "");
+    console.warn("[game error]", msg);
+    // ゲーム本体の例外だけ扱う(音声の読み込み失敗など無害なものは無視)
+    if (!/DISABLE_EXCEPTION_CATCHING|exception|abort/i.test(msg)) return;
+    errors.count++;
+    logToServer([
+      `time=${new Date().toISOString()}`,
+      `uptime=${((realPerf() - loadedAt) / 1000).toFixed(1)}s speed=${scale} auto=${auto.on} delay=${auto.delay}`,
+      `ua=${navigator.userAgent}`,
+      `message=${msg}`,
+    ].join("\n"));
+    setTimeout(checkMainLoop, 300);
+  }
+
+  function checkMainLoop(retry = 0) {
+    const stopped = realPerf() - lastGameRaf > 250;
+    if (!stopped) { ui.gameError(errors, true); return; }
+    const mod = window.gameInstance?.Module;
+    try { mod?.resumeMainLoop?.(); } catch (e) { console.error(e); }
+    setTimeout(() => {
+      if (realPerf() - lastGameRaf < 250) { errors.recovered++; ui.gameError(errors, true); }
+      else if (retry < 2) checkMainLoop(retry + 1);
+      else ui.gameError(errors, false);
+    }, 300);
   }
 
   // ローカルサーバーを止めてゲームを終了する。ブラウザのタブは自分で開いたものではないので
@@ -352,7 +391,7 @@
     set auto(v) { setAuto(!!v); },
     set delay(v) { auto.delay = Number(v) || 0; ui.update(); },
     set debug(v) { auto.debug = !!v; },
-    onGameError(msg) { ui.gameError(msg); },
+    onGameError,
     captureRomaji,
   };
 })();
