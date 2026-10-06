@@ -5,17 +5,21 @@
 - **個人利用専用です。** ダウンロードしたゲームのファイル（`site/`）はリポジトリに含めず、どこにも公開しないでください（`.gitignore` 済み）。
 - ランキングへの送信は遮断しています（`serve.mjs` が外部への通信を CSP で禁止）。チートした記録が本家のランキングに載ることはありません。
 
-## 使い方
+## 使い方（ダブルクリックで起動）
 
-Node.js 18 以上が必要です。
+1. このリポジトリを ZIP でダウンロードして解凍する
+2. `sushida-offline` フォルダの中の起動ファイルをダブルクリックする
+   - Windows：`start.bat`
+   - Mac：`start.command`
+3. ブラウザが自動で開いて寿司打が始まる（http://localhost:8080/）
 
-```sh
-cd sushida-offline
-node download.mjs   # 最初の1回だけ。ゲーム本体と OCR エンジンを site/ に保存（約 30MB）
-node serve.mjs      # http://localhost:8080/ をブラウザで開く
-```
+起動ファイルがやること：
 
-一度ダウンロードしたあとは、ネットに接続していなくても遊べます。
+- Node.js が無ければインストールする（Windows のみ。winget を使う。Mac は https://nodejs.org/ja から入れる）
+- 初回だけゲーム本体と OCR エンジンを `site/` にダウンロードする（約 30MB）。2回目以降はネット接続なしで動く
+- ローカルサーバーを起動してブラウザを開く。黒いウィンドウを閉じると終了する
+
+コマンドで動かす場合：`node download.mjs` のあと `node serve.mjs --open`
 
 ## チート機能
 

@@ -45,4 +45,4 @@ for (const [f, url] of FILES) {
   await writeFile(dest, buf);
   console.log(`saved ${f} (${(buf.length / 1024).toFixed(0)} KB)`);
 }
-console.log("\n完了。次は `node serve.mjs` を実行してください。");
+console.log("ダウンロード完了");

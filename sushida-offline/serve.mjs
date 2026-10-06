@@ -1,13 +1,24 @@
 // ダウンロードした寿司打をローカルで配信する。外部への通信は CSP で遮断する。
-// 使い方: node serve.mjs [port]  → http://localhost:8080/
+// 使い方: node serve.mjs [port] [--open]  → http://localhost:8080/
+//   --open を付けると、起動後にブラウザで開く
 import { createServer } from "node:http";
+import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const SITE = join(ROOT, "site");
-const PORT = Number(process.argv[2] || process.env.PORT || 8080);
+const args = process.argv.slice(2);
+const OPEN = args.includes("--open");
+const PORT = Number(args.find((a) => !a.startsWith("--")) || process.env.PORT || 8080);
+const URL_ = `http://localhost:${PORT}/`;
+
+function openBrowser() {
+  const cmd = process.platform === "win32" ? `start "" "${URL_}"`
+    : process.platform === "darwin" ? `open "${URL_}"` : `xdg-open "${URL_}"`;
+  exec(cmd, () => {});
+}
 
 // ツール側のファイル（ランチャーとチート）。それ以外は site/ から返す。
 const TOOL_FILES = { "/": "index.html", "/index.html": "index.html", "/cheat.js": "cheat.js" };
@@ -46,6 +57,15 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end("not found (先に node download.mjs を実行してください)");
   }
-}).listen(PORT, "127.0.0.1", () => {
-  console.log(`寿司打オフライン: http://localhost:${PORT}/`);
-});
+})
+  .on("error", (e) => {
+    if (e.code !== "EADDRINUSE") throw e;
+    // すでに起動している場合はブラウザで開くだけ
+    console.log(`すでに起動しています: ${URL_}`);
+    if (OPEN) openBrowser();
+  })
+  .listen(PORT, "127.0.0.1", () => {
+    console.log(`寿司打オフライン: ${URL_}`);
+    console.log("このウィンドウを閉じると終了します。");
+    if (OPEN) openBrowser();
+  });
