@@ -40,8 +40,16 @@ const CSP = [
   "connect-src 'self' blob: data:",
 ].join("; ");
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+  // チートパネルの「終了」ボタン。独自ヘッダー必須にして、他のサイトからは止められないようにする。
+  if (path === "/__quit" && req.method === "POST" && req.headers["x-sushida-quit"] === "1") {
+    res.writeHead(204).end();
+    console.log("終了ボタンが押されたので終了します。");
+    server.close();
+    setTimeout(() => process.exit(0), 200);
+    return;
+  }
   // ランキング送信 (cheat.js が sushida.net/php/r.php からここへ向け直す)。
   // 本物のサーバーも不正な送信には空の 200 を返すので、同じ応答にしてゲームを先に進ませる。
   if (path === "/php/r.php") {
@@ -64,7 +72,8 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end("not found (先に node download.mjs を実行してください)");
   }
-})
+});
+server
   .on("error", (e) => {
     if (e.code !== "EADDRINUSE") throw e;
     // すでに起動している場合はブラウザで開くだけ
@@ -73,6 +82,6 @@ createServer(async (req, res) => {
   })
   .listen(PORT, "127.0.0.1", () => {
     console.log(`寿司打オフライン: ${URL_}`);
-    console.log("このウィンドウを閉じると終了します。");
+    console.log("終了するときはチートパネルの「終了」を押すか、このウィンドウを閉じてください。");
     if (OPEN) openBrowser();
   });

@@ -262,6 +262,8 @@
         #cheat-panel button:focus-visible { outline: 2px solid #f5c26b; outline-offset: 2px; }
         #cheat-panel input[type=range] { width: 100%; }
         #cheat-panel .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+        #cheat-panel button.quit { width: 100%; background: #3a2d26; }
+        #cheat-panel button.quit.armed { background: #c0392b; border-color: #e5735f; color: #fff; }
         #cheat-panel .note { font-size: 12px; color: #a8957f; line-height: 1.5; margin: 0; }
       </style>
       <h2>チートパネル</h2>
@@ -287,7 +289,8 @@
           <button type="button" data-v="2">×2</button>
         </div>
       </section>
-      <p class="note">ゲーム画面を一度クリックしてからスペースで開始。ローマ字表示は「設定」でONのままにしてください。ランキング送信は遮断しています。</p>`;
+      <p class="note">ゲーム画面を一度クリックしてからスペースで開始。ローマ字表示は「設定」でONのままにしてください。ランキング送信は遮断しています。</p>
+      <div class="row"><button id="ch-quit" type="button" class="quit">終了</button></div>`;
 
     const $ = (id) => document.getElementById(id);
     const autoBtn = $("ch-auto"), delay = $("ch-delay");
@@ -299,6 +302,19 @@
       if (v != null) { setSpeed(v); ui.update(); }
     };
     $("ch-reload").onclick = () => location.reload();
+    // 誤って押してもすぐ終わらないよう、3秒以内にもう一度押したら終了する
+    const quitBtn = $("ch-quit");
+    let quitTimer = 0;
+    quitBtn.onclick = () => {
+      if (!quitBtn.classList.contains("armed")) {
+        quitBtn.classList.add("armed");
+        quitBtn.textContent = "もう一度押すと終了";
+        quitTimer = setTimeout(() => { quitBtn.classList.remove("armed"); quitBtn.textContent = "終了"; }, 3000);
+        return;
+      }
+      clearTimeout(quitTimer);
+      quit();
+    };
     ui.status = (s) => { $("ch-status").textContent = s; };
     ui.gameError = (msg) => {
       console.warn("[game error]", msg);
@@ -315,6 +331,16 @@
       for (const b of $("ch-speed").children) b.setAttribute("aria-pressed", String(Number(b.dataset.v) === scale));
     };
     ui.update();
+  }
+
+  // ローカルサーバーを止めてゲームを終了する。ブラウザのタブは自分で開いたものではないので
+  // スクリプトから閉じられない場合があり、そのときは閉じてよいことを表示する。
+  async function quit() {
+    auto.on = false;
+    try { await fetch("/__quit", { method: "POST", headers: { "X-Sushida-Quit": "1" } }); } catch {}
+    document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;background:#1b1b1b;color:#f3e9dc;font:16px system-ui,sans-serif;text-align:center;padding:16px">
+      <div><p style="font-size:20px;margin:0 0 8px">寿司打オフラインを終了しました</p><p style="margin:0;color:#a8957f">このタブは閉じてかまいません。もう一度遊ぶときは start.bat をダブルクリックしてください。</p></div></div>`;
+    window.close();
   }
 
   document.addEventListener("DOMContentLoaded", buildPanel);

@@ -32,4 +32,4 @@ if errorlevel 1 (
 )
 
 "%NODE%" serve.mjs --open
-pause
+if errorlevel 1 pause
