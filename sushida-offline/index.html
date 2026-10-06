@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>寿司打 オフライン</title>
+<link rel="stylesheet" href="TemplateData/style.css">
+<style>
+  body { margin: 0; background: #1b1b1b; color: #eee; font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif; }
+  #wrap { display: flex; gap: 16px; justify-content: center; align-items: flex-start; padding: 24px 16px; flex-wrap: wrap; }
+  #gameContainer { width: 500px; height: 420px; }
+</style>
+<!-- cheat.js は UnityLoader より先に読み込む（時間関数の差し替えのため） -->
+<script src="cheat.js"></script>
+<script src="TemplateData/UnityProgress.js"></script>
+<script src="files/v1_3/UnityLoader.js"></script>
+</head>
+<body>
+<div id="wrap">
+  <div class="webgl-content"><div id="gameContainer"></div></div>
+  <div id="cheat-panel"></div>
+</div>
+<script>
+  window.gameInstance = UnityLoader.instantiate("gameContainer", "files/v1_3/Web.json", { onProgress: UnityProgress });
+  window.addEventListener("load", () => {
+    const c = document.querySelector("canvas");
+    if (c) c.ondragstart = () => false;
+  });
+</script>
+</body>
+</html>
