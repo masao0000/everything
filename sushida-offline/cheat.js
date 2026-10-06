@@ -243,7 +243,8 @@
   // このゲームは 600 皿に届くとフリーズする(内部エラーになる)ので、手前で自動入力を止める。
   // 皿数は画面左の看板「○○皿」の数字を OCR で読み取る。
   const SIGN = { l: 14, r: 98, t: 227, b: 275 }; // 看板の白い部分(500x420 基準)
-  const plates = { count: 0, limit: 580, worker: null, loading: null };
+  // 看板は10皿ごとにしか更新されないので、600 より余裕を持たせて 570 で止める
+  const plates = { count: 0, limit: 570, worker: null, loading: null };
   const LIMIT_MESSAGE = "システム上限(600皿)に到達しそうなので自動入力をストップしました";
 
   async function getDigitWorker() {
@@ -299,29 +300,39 @@
     return out;
   }
 
-  let lastRead = -1;
+  // 皿数は1コースの中では増える一方なので、前の値以上で増え方が現実的(60皿以内)な読み取りだけ採用する。
+  // 看板は10皿ごとにしか変わらず、自動入力が速いと読み取りの間にも皿が増えるので、
+  // コース開始からの平均の増え方で1秒先を予測して早めに止める。
+  const PLAUSIBLE_JUMP = 60;
+  const plausible = (from, to) => from >= 0 && to >= from && to - from <= PLAUSIBLE_JUMP;
+  let lastRead = -1, accepted = -1, first = null, rate = 0;
+
+  function resetPlates() { plates.count = 0; lastRead = -1; accepted = -1; first = null; rate = 0; }
+
   async function plateWatch() {
     for (;;) {
-      await sleep(700);
+      await sleep(300);
       if (ending || document.hidden) continue;
       const img = captureSign();
-      if (!img) { if (!captureRomaji()) { plates.count = 0; lastRead = -1; } continue; }
-      // 自動入力中か、ある程度皿が積み上がってから読み始める(OCR の負荷を抑える)
-      if (!auto.on && plates.count === 0 && lastRead < 0 && !plates.worker) continue;
+      if (!img) { if (!captureRomaji()) resetPlates(); continue; }
+      // 自動入力を使うまでは読み取らない(OCR の負荷を抑える)
+      if (!auto.on && !plates.worker) continue;
       try {
         const w = await getDigitWorker();
         const { data } = await w.recognize(img);
         const n = parseInt(data.text.replace(/\D/g, ""), 10);
         if (!Number.isFinite(n)) continue;
-        // 読み間違い対策: 2回続けて同じくらいの値なら採用
-        if (lastRead >= 0 && Math.abs(n - lastRead) <= 15) {
+        if (plausible(accepted, n) || plausible(lastRead, n)) {
+          const now = realPerf();
+          if (!first) first = { n, t: now };
+          else if (now - first.t > 2000) rate = (n - first.n) / ((now - first.t) / 1000);
+          accepted = n;
           plates.count = n;
-          ui.update();
-          if (n >= plates.limit && auto.on) {
+          if (auto.on && n + rate * 1.0 >= plates.limit) {
             auto.on = false;
             ui.status(LIMIT_MESSAGE);
-            ui.update();
           }
+          ui.update();
         }
         lastRead = n;
       } catch (e) { console.error(e); }
@@ -351,7 +362,7 @@
     }
     setSpeed(prevSpeed);
     ending = false;
-    plates.count = 0; lastRead = -1;
+    resetPlates();
     ui.status(doneMessage || (prevAuto ? "コースを終了しました(自動入力はOFFにしました)" : "コースを終了しました"));
     ui.update();
   }
@@ -520,7 +531,7 @@
     set debug(v) { auto.debug = !!v; },
     onGameError,
     get plates() { return plates.count; },
-    set plateLimit(v) { plates.limit = Number(v) || 580; ui.update(); },
+    set plateLimit(v) { plates.limit = Number(v) || 570; ui.update(); },
     captureRomaji,
   };
 })();
