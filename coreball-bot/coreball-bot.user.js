@@ -1,3 +1,15 @@
+// ==UserScript==
+// @name         まち針ゲーム 自動プレイ
+// @namespace    coreball-bot
+// @version      1.0
+// @description  arealme.com のまち針ゲームを自動で進めます。右上のボタンか A キーで ON/OFF
+// @match        https://www.arealme.com/coreball/*
+// @run-at       document-start
+// @grant        none
+// ==/UserScript==
+// このファイルは build-userscript.mjs で inject.js から生成しています。
+
+window.__cbStandalone = true;
 // まち針ゲーム (arealme.com/coreball) 自動プレイ用のページ内エージェント。
 // ゲームより先に読み込まれ、Canvas の描画命令から針の角度を読み取り、
 // 着弾時に既存の針と当たらないタイミングでスペースキーを送る。

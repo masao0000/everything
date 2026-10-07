@@ -2,6 +2,16 @@
 
 [まち針ゲーム (arealme.com/coreball)](https://www.arealme.com/coreball/ja/) を Playwright で自動プレイし、レベルを進めます。
 
+## いつものブラウザで使う（おすすめ・インストール不要）
+
+Chrome / Edge / Firefox の拡張機能「Tampermonkey」を使います。
+
+1. [Tampermonkey](https://www.tampermonkey.net/) をブラウザに追加
+2. Tampermonkey のアイコン →「新規スクリプトを追加」
+3. 中身をすべて消し、`coreball-bot.user.js` の中身を貼り付けて保存（Ctrl+S）
+4. （Chrome / Edge）拡張機能の管理画面で Tampermonkey の「ユーザースクリプトを許可」を ON
+5. [まち針ゲーム](https://www.arealme.com/coreball/ja/) を開くと自動で進みます。右上のボタンか A キーで ON/OFF
+
 ## かんたん起動（ダブルクリック）
 
 1. [Node.js](https://nodejs.org/ja) の「LTS」をインストール（最初の 1 回だけ）
