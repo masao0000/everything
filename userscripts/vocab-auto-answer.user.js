@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.8.0
+// @version      1.8.1
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -18,7 +18,7 @@
 
   // ↓ここにClaude APIキー(sk-ant-...)を直接貼り付け (https://console.anthropic.com で発行)
   const API_KEY = 'ここにAPIキー';
-  const DEFAULT_MODEL = 'claude-sonnet-5-5';
+  const DEFAULT_MODEL = 'claude-haiku-4-5';
   const BLANK_RE = /\(\s*\)|（\s*）|_{2,}/;
 
   // 画面移動時の「このサイトを離れますか？」ポップアップを無効化
