@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.6.0
+// @version      1.6.1
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -106,13 +106,20 @@
               '和訳がある場合はそれも参考に。JSON配列のみで出力（例: [3,1,0]）。\n\n' + body,
           }],
         }),
+        timeout: 30000,
         onload: (res) => {
+          if (res.status !== 200) {
+            let msg = res.responseText;
+            try { msg = JSON.parse(res.responseText).error.message; } catch (e) { /* 生テキストのまま */ }
+            return reject(new Error(`APIエラー(${res.status}): ${msg}`));
+          }
           try {
             const text = JSON.parse(res.responseText).content.map((c) => c.text || '').join('');
             resolve(JSON.parse(text.match(/\[[\d,\s]*\]/)[0]));
           } catch (e) { reject(new Error('応答解析失敗: ' + res.responseText)); }
         },
-        onerror: reject,
+        onerror: (res) => reject(new Error('通信失敗: Tampermonkeyで api.anthropic.com への接続を許可したか確認してください ' + (res && res.error ? res.error : ''))),
+        ontimeout: () => reject(new Error('通信タイムアウト')),
       });
     });
   }
@@ -146,7 +153,7 @@
         opt.click();
       });
     } catch (e) {
-      toast(e.message);
+      toast((e && e.message) || String(e));
     }
   }
 
