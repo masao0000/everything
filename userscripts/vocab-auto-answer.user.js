@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.5.0
+// @version      1.6.0
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -117,8 +117,25 @@
     });
   }
 
+  // スクロールで追加読み込みされる問題を全部出すため、ページ末尾まで自動スクロール
+  async function loadAll() {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const startY = window.scrollY;
+    let lastH = -1, same = 0;
+    while (same < 3) {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      await sleep(400);
+      const h = document.documentElement.scrollHeight;
+      same = h === lastH ? same + 1 : 0;
+      lastH = h;
+    }
+    window.scrollTo(0, startY);
+  }
+
   async function run() {
     try {
+      toast('問題を読み込み中…');
+      await loadAll();
       const qs = extractQuestions();
       if (!qs.length) return toast('問題が見つかりません');
       const answers = await askClaude(qs);
