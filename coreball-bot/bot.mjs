@@ -66,9 +66,15 @@ async function playOnce() {
     window.__cbBot.enabled = true;
     return window.__cbBot.results.length;
   });
+  // 自動 OFF の間は次のレベルを始めない (ON に戻すまで待つ)
+  if (!(await page.evaluate(() => window.__cbBot.auto))) {
+    console.log("⏸  自動 OFF 中… 画面右上のボタンか「A」キーで ON に戻すと再開します");
+    await page.waitForFunction(() => window.__cbBot.auto, null, { timeout: 0, polling: 200 });
+    console.log("▶  再開");
+  }
   await page.click("#coreball_playbutton", { timeout: 15_000 });
   // 結果 (pass/fail) が出るまで待つ。1 レベル最大 3 分
-  await page.waitForFunction((n) => window.__cbBot.results.length > n, before, { timeout: 180_000, polling: 100 });
+  await page.waitForFunction((n) => window.__cbBot.results.length > n, before, { timeout: 0, polling: 100 });
   const res = await page.evaluate(() => window.__cbBot.results.at(-1));
   // ステージが閉じてプレイボタンに戻るまで待つ
   await page.waitForFunction(() => document.getElementById("coreball_stage")?.style.display === "none", null, {

@@ -19,6 +19,7 @@
 
   const bot = (window.__cbBot = {
     enabled: false,
+    auto: true, // 自動プレイの ON/OFF (画面右上のボタン or「A」キーで切替)
     margin: 3, // 当たり判定の閾値に足す安全マージン (度, 線形予測時)
     exactMargin: 1, // 同上 (正確な予測時)
     minMargin: 0.5,
@@ -210,6 +211,12 @@
       return;
     }
 
+    // 自動 OFF 中は観測だけ続け、撃たない (手動プレイ中も先読みの同期を保つ)
+    if (!bot.auto) {
+      waitingSince = 0;
+      return;
+    }
+
     // 発射済みの玉が刺さるまで (= 針が増えるまで) 待つ
     if (inFlight) {
       if (angles.length > inFlight.count || ts - inFlight.ts > 300) inFlight = null;
@@ -278,6 +285,52 @@
     const ev = new KeyboardEvent("keydown", { key: " ", code: "Space", keyCode: 32, which: 32, bubbles: true });
     document.body.dispatchEvent(ev);
   }
+
+  // 手動の発射もゲームの回転に影響するので、影の入力に反映する
+  const markManual = (e) => {
+    if (e.isTrusted) clickPending = true;
+  };
+  document.addEventListener("keydown", (e) => e.keyCode === 32 && markManual(e), true);
+  document.addEventListener("mousedown", (e) => e.target && e.target.id === STAGE_ID && markManual(e), true);
+  document.addEventListener("touchstart", (e) => e.target && e.target.id === STAGE_ID && markManual(e), true);
+
+  // --- ON/OFF 切替 --------------------------------------------------------
+  let btn = null;
+  function render() {
+    if (!btn) return;
+    btn.textContent = bot.auto ? "自動: ON (A)" : "自動: OFF (A)";
+    btn.style.background = bot.auto ? "#1a7f37" : "#555";
+  }
+  bot.setAuto = (on) => {
+    bot.auto = on;
+    waitingSince = 0;
+    render();
+  };
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if ((e.key === "a" || e.key === "A") && !/INPUT|TEXTAREA/.test(e.target.tagName)) bot.setAuto(!bot.auto);
+    },
+    true,
+  );
+  function mountButton() {
+    btn = document.createElement("button");
+    btn.id = "cb-bot-toggle";
+    btn.style.cssText =
+      "position:fixed;top:10px;right:10px;z-index:2147483647;padding:8px 14px;border:none;border-radius:8px;" +
+      "color:#fff;font:bold 14px system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 6px #0006;";
+    // ゲームの mousedown (発射) に拾われないよう伝播を止める
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      bot.setAuto(!bot.auto);
+    });
+    for (const ev of ["mousedown", "touchstart", "click"]) btn.addEventListener(ev, (e) => e.stopPropagation());
+    document.body.appendChild(btn);
+    render();
+  }
+  if (document.body) mountButton();
+  else document.addEventListener("DOMContentLoaded", mountButton);
 
   bot.reset = () => {
     bot.shots = 0;
