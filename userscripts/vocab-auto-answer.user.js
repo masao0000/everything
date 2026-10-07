@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.9.0
+// @version      1.9.1
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -48,9 +48,12 @@
   });
   GM_registerMenuCommand('解答する', run);
 
+  // 選択肢先頭の番号(「1.」「(a)」「①」など)を除いた語
+  const optLabel = (t) => t.trim().replace(/^(?:[(（][0-9a-dA-D]{1,2}[)）]|[0-9]{1,2}[.．)）]|[①-⑳])\s*/, '');
+
   // 子要素を持たない短いテキスト要素 = 選択肢候補
   function isLeafOption(el) {
-    const t = el.textContent.trim();
+    const t = optLabel(el.textContent);
     // 選択肢は英単語(句)のみ。「各1点」などの説明文や記号は除外
     return t && t.length < 40 && /^[A-Za-z][A-Za-z\s'’.\-]*$/.test(t) &&
       [...el.children].every((c) => !c.textContent.trim()) && el.offsetParent !== null;
@@ -83,7 +86,7 @@
         box = box.parentElement;
       }
       if (!box || box === document.body) continue;
-      questions.push({ text, options, labels: options.map((o) => o.textContent.trim()) });
+      questions.push({ text, options, labels: options.map((o) => optLabel(o.textContent)) });
     }
     return questions;
   }
@@ -165,6 +168,7 @@
         opt.style.outline = '3px solid #e53935';
         opt.click();
       });
+      if (qs.length !== 10) console.warn(`問題数が${qs.length}問です（想定10問）。誤検出の可能性あり`, qs);
       toast(`${qs.length}問中 ${qs.length - miss}問を選択` + (miss ? '（一致しない回答あり。F12のConsoleを確認）' : ''));
     } catch (e) {
       toast((e && e.message) || String(e));
