@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.6.1
+// @version      1.7.0
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -18,7 +18,7 @@
 
   // ↓ここにClaude APIキー(sk-ant-...)を直接貼り付け (https://console.anthropic.com で発行)
   const API_KEY = 'ここにAPIキー';
-  const DEFAULT_MODEL = 'claude-haiku-4-5';
+  const DEFAULT_MODEL = 'claude-sonnet-5-5';
   const BLANK_RE = /\(\s*\)|（\s*）|_{2,}/;
 
   // 画面移動時の「このサイトを離れますか？」ポップアップを無効化
@@ -99,11 +99,12 @@
         },
         data: JSON.stringify({
           model,
-          max_tokens: 512,
+          max_tokens: 2048,
           messages: [{
             role: 'user',
-            content: '以下の英語空所補充問題それぞれについて、正しい選択肢の番号(0始まり)を答えてください。' +
-              '和訳がある場合はそれも参考に。JSON配列のみで出力（例: [3,1,0]）。\n\n' + body,
+            content: '以下は英単語の空所補充問題です。各問の英文の ( ) に入る語を選択肢から選んでください。' +
+              '日本語訳が付いている場合は、訳と最も意味が合う語を選ぶこと。' +
+              '最後に、選んだ語を選択肢の綴りそのままで、問題順のJSON文字列配列として1行で出力（例: ["sparked","transactions"]）。\n\n' + body,
           }],
         }),
         timeout: 30000,
@@ -115,7 +116,8 @@
           }
           try {
             const text = JSON.parse(res.responseText).content.map((c) => c.text || '').join('');
-            resolve(JSON.parse(text.match(/\[[\d,\s]*\]/)[0]));
+            const arrs = text.match(/\[[^\[\]]*\]/g);
+            resolve(JSON.parse(arrs[arrs.length - 1]));
           } catch (e) { reject(new Error('応答解析失敗: ' + res.responseText)); }
         },
         onerror: (res) => reject(new Error('通信失敗: Tampermonkeyで api.anthropic.com への接続を許可したか確認してください ' + (res && res.error ? res.error : ''))),
@@ -146,12 +148,17 @@
       const qs = extractQuestions();
       if (!qs.length) return toast('問題が見つかりません');
       const answers = await askClaude(qs);
+      console.table(qs.map((q, i) => ({ 問題: q.text, 選択肢: q.labels.join(' / '), 回答: answers[i] })));
+      let miss = 0;
       qs.forEach((q, i) => {
-        const opt = q.options[answers[i]];
-        if (!opt) return;
+        // 番号ではなく語で照合（ずれ防止）
+        const a = String(answers[i] || '').trim().toLowerCase();
+        const opt = q.options[q.labels.findIndex((l) => l.toLowerCase() === a)];
+        if (!opt) { miss++; return; }
         opt.style.outline = '3px solid #e53935';
         opt.click();
       });
+      toast(`${qs.length}問中 ${qs.length - miss}問を選択` + (miss ? '（一致しない回答あり。F12のConsoleを確認）' : ''));
     } catch (e) {
       toast((e && e.message) || String(e));
     }
