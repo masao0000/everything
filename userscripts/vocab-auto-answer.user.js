@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.2.0
+// @version      1.3.0
 // @description  英語の空所補充4択問題を読み取り、Gemini API(無料枠)で正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -14,13 +14,11 @@
 (function () {
   'use strict';
 
+  // ↓ここにGemini APIキーを直接貼り付け (https://aistudio.google.com/apikey で無料発行)
+  const API_KEY = 'ここにAPIキー';
   const DEFAULT_MODEL = 'gemini-flash-latest';
   const BLANK_RE = /\(\s*\)|（\s*）|_{2,}/;
 
-  GM_registerMenuCommand('APIキーを設定', () => {
-    const key = prompt('Gemini APIキーを入力 (https://aistudio.google.com/apikey で無料発行)', GM_getValue('apiKey', ''));
-    if (key !== null) GM_setValue('apiKey', key.trim());
-  });
   GM_registerMenuCommand('モデルを変更', () => {
     const m = prompt('Geminiモデル名', GM_getValue('model', DEFAULT_MODEL));
     if (m !== null) GM_setValue('model', m.trim() || DEFAULT_MODEL);
@@ -62,12 +60,8 @@
   }
 
   function askGemini(questions) {
-    let apiKey = GM_getValue('apiKey', '');
-    if (!apiKey) {
-      apiKey = (prompt('Gemini APIキーを入力 (https://aistudio.google.com/apikey で無料発行)') || '').trim();
-      if (!apiKey) throw new Error('APIキーが入力されませんでした');
-      GM_setValue('apiKey', apiKey);
-    }
+    const apiKey = API_KEY;
+    if (!apiKey || apiKey === 'ここにAPIキー') throw new Error('コード上部の API_KEY にキーを貼り付けてください');
     const body = questions.map((q, i) =>
       `Q${i + 1}: ${q.text}\n` + q.labels.map((l, j) => `  ${j}: ${l}`).join('\n')).join('\n\n');
     return new Promise((resolve, reject) => {
