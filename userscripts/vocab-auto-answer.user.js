@@ -1,25 +1,29 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.0.0
-// @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
+// @version      1.1.0
+// @description  英語の空所補充4択問題を読み取り、Gemini API(無料枠)で正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @connect      api.anthropic.com
+// @connect      generativelanguage.googleapis.com
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const MODEL = 'claude-haiku-4-5-20251001';
+  const DEFAULT_MODEL = 'gemini-flash-latest';
   const BLANK_RE = /\(\s*\)|（\s*）|_{2,}/;
 
   GM_registerMenuCommand('APIキーを設定', () => {
-    const key = prompt('Anthropic APIキーを入力', GM_getValue('apiKey', ''));
+    const key = prompt('Gemini APIキーを入力 (https://aistudio.google.com/apikey で無料発行)', GM_getValue('apiKey', ''));
     if (key !== null) GM_setValue('apiKey', key.trim());
+  });
+  GM_registerMenuCommand('モデルを変更', () => {
+    const m = prompt('Geminiモデル名', GM_getValue('model', DEFAULT_MODEL));
+    if (m !== null) GM_setValue('model', m.trim() || DEFAULT_MODEL);
   });
   GM_registerMenuCommand('解答する', run);
 
@@ -57,32 +61,29 @@
     return questions;
   }
 
-  function askClaude(questions) {
+  function askGemini(questions) {
     const apiKey = GM_getValue('apiKey', '');
     if (!apiKey) throw new Error('APIキー未設定（Tampermonkeyメニューから設定）');
     const body = questions.map((q, i) =>
       `Q${i + 1}: ${q.text}\n` + q.labels.map((l, j) => `  ${j}: ${l}`).join('\n')).join('\n\n');
     return new Promise((resolve, reject) => {
+      const model = GM_getValue('model', DEFAULT_MODEL);
       GM_xmlhttpRequest({
         method: 'POST',
-        url: 'https://api.anthropic.com/v1/messages',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         data: JSON.stringify({
-          model: MODEL,
-          max_tokens: 512,
-          messages: [{
-            role: 'user',
-            content: '以下の英語空所補充問題それぞれについて、正しい選択肢の番号(0始まり)を答えてください。' +
-              '和訳がある場合はそれも参考に。JSON配列のみで出力（例: [3,1,0]）。\n\n' + body,
+          contents: [{
+            parts: [{
+              text: '以下の英語空所補充問題それぞれについて、正しい選択肢の番号(0始まり)を答えてください。' +
+                '和訳がある場合はそれも参考に。JSON配列のみで出力（例: [3,1,0]）。\n\n' + body,
+            }],
           }],
+          generationConfig: { temperature: 0 },
         }),
         onload: (res) => {
           try {
-            const text = JSON.parse(res.responseText).content[0].text;
+            const text = JSON.parse(res.responseText).candidates[0].content.parts.map((p) => p.text).join('');
             resolve(JSON.parse(text.match(/\[[\d,\s]*\]/)[0]));
           } catch (e) { reject(new Error('応答解析失敗: ' + res.responseText)); }
         },
@@ -95,7 +96,7 @@
     try {
       const qs = extractQuestions();
       if (!qs.length) return alert('問題が見つかりません');
-      const answers = await askClaude(qs);
+      const answers = await askGemini(qs);
       qs.forEach((q, i) => {
         const opt = q.options[answers[i]];
         if (!opt) return;
