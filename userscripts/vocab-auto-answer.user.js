@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.7.0
+// @version      1.8.0
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -72,11 +72,15 @@
     const questions = [];
     for (const [parent, options] of groups) {
       if (options.length < 3 || options.length > 6) continue;
-      // 祖先を遡って空所を含むテキストを持つ最小のコンテナを探す
-      let box = parent;
-      while (box && !BLANK_RE.test(box.textContent.replace(parent.textContent, ''))) box = box.parentElement;
-      if (!box) continue;
-      const text = box.textContent.replace(parent.textContent, '').replace(/\s+/g, ' ').trim();
+      // 祖先を遡って、選択肢以外の文章(問題文)を持つ最小のコンテナを探す
+      // ※空所が ( ) 以外の表記(下線の要素など)でも拾えるよう、空所の有無は条件にしない
+      let box = parent, text = '';
+      while (box && box !== document.body) {
+        text = box.textContent.replace(parent.textContent, '').replace(/\s+/g, ' ').trim();
+        if (/[A-Za-z]{2,}.*\s.*[A-Za-z]{2,}/.test(text)) break;
+        box = box.parentElement;
+      }
+      if (!box || box === document.body) continue;
       questions.push({ text, options, labels: options.map((o) => o.textContent.trim()) });
     }
     return questions;
@@ -104,7 +108,7 @@
             role: 'user',
             content: '以下は英単語の空所補充問題です。各問の英文の ( ) に入る語を選択肢から選んでください。' +
               '日本語訳が付いている場合は、訳と最も意味が合う語を選ぶこと。' +
-              '最後に、選んだ語を選択肢の綴りそのままで、問題順のJSON文字列配列として1行で出力（例: ["sparked","transactions"]）。\n\n' + body,
+              '最後に、問題番号をキー、選んだ語(選択肢の綴りそのまま)を値にしたJSONオブジェクトを1行で出力（例: {"1":"sparked","2":"transactions"}）。全問必ず答えること。\n\n' + body,
           }],
         }),
         timeout: 90000,
@@ -116,8 +120,9 @@
           }
           try {
             const text = JSON.parse(res.responseText).content.map((c) => c.text || '').join('');
-            const arrs = text.match(/\[[^\[\]]*\]/g);
-            resolve(JSON.parse(arrs[arrs.length - 1]));
+            const objs = text.match(/\{[^{}]*\}/g);
+            const obj = JSON.parse(objs[objs.length - 1]);
+            resolve(questions.map((_, i) => obj[String(i + 1)]));
           } catch (e) { reject(new Error('応答解析失敗: ' + res.responseText)); }
         },
         onerror: (res) => reject(new Error('通信失敗: Tampermonkeyで api.anthropic.com への接続を許可したか確認してください ' + (res && res.error ? res.error : ''))),
