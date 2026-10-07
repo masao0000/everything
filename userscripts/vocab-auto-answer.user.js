@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.4.0
+// @version      1.5.0
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      api.anthropic.com
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -18,6 +20,27 @@
   const API_KEY = 'ここにAPIキー';
   const DEFAULT_MODEL = 'claude-haiku-4-5';
   const BLANK_RE = /\(\s*\)|（\s*）|_{2,}/;
+
+  // 画面移動時の「このサイトを離れますか？」ポップアップを無効化
+  (function blockBeforeUnload() {
+    const w = unsafeWindow;
+    const origAdd = w.EventTarget.prototype.addEventListener;
+    w.EventTarget.prototype.addEventListener = function (type, ...args) {
+      if (type === 'beforeunload') return;
+      return origAdd.call(this, type, ...args);
+    };
+    Object.defineProperty(w, 'onbeforeunload', { get: () => null, set: () => {}, configurable: true });
+  })();
+
+  // alertの代わりに画面下に数秒だけメッセージを出す
+  function toast(msg) {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    t.style.cssText = 'position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:2147483647;' +
+      'background:#333;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;max-width:80vw;';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+  }
 
   GM_registerMenuCommand('モデルを変更', () => {
     const m = prompt('Claudeモデル名', GM_getValue('model', DEFAULT_MODEL));
@@ -97,7 +120,7 @@
   async function run() {
     try {
       const qs = extractQuestions();
-      if (!qs.length) return alert('問題が見つかりません');
+      if (!qs.length) return toast('問題が見つかりません');
       const answers = await askClaude(qs);
       qs.forEach((q, i) => {
         const opt = q.options[answers[i]];
@@ -106,7 +129,7 @@
         opt.click();
       });
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     }
   }
 
@@ -116,7 +139,8 @@
   btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:10px 16px;' +
     'background:#e53935;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;';
   btn.addEventListener('click', run);
-  document.body.appendChild(btn);
+  if (document.body) document.body.appendChild(btn);
+  else document.addEventListener('DOMContentLoaded', () => document.body.appendChild(btn));
 
   // Alt+A でも実行
   document.addEventListener('keydown', (e) => {
