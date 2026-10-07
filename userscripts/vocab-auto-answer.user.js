@@ -107,7 +107,7 @@
               '最後に、選んだ語を選択肢の綴りそのままで、問題順のJSON文字列配列として1行で出力（例: ["sparked","transactions"]）。\n\n' + body,
           }],
         }),
-        timeout: 30000,
+        timeout: 90000,
         onload: (res) => {
           if (res.status !== 200) {
             let msg = res.responseText;
