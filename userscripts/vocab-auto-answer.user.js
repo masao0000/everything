@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.8.1
+// @version      1.9.0
 // @description  英語の空所補充4択問題を読み取り、Claude APIで正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -51,7 +51,8 @@
   // 子要素を持たない短いテキスト要素 = 選択肢候補
   function isLeafOption(el) {
     const t = el.textContent.trim();
-    return t && t.length < 40 && !BLANK_RE.test(t) &&
+    // 選択肢は英単語(句)のみ。「各1点」などの説明文や記号は除外
+    return t && t.length < 40 && /^[A-Za-z][A-Za-z\s'’.\-]*$/.test(t) &&
       [...el.children].every((c) => !c.textContent.trim()) && el.offsetParent !== null;
   }
 
@@ -76,7 +77,8 @@
       // ※空所が ( ) 以外の表記(下線の要素など)でも拾えるよう、空所の有無は条件にしない
       let box = parent, text = '';
       while (box && box !== document.body) {
-        text = box.textContent.replace(parent.textContent, '').replace(/\s+/g, ' ').trim();
+        // innerTextで<script>等の非表示テキストを除外
+        text = box.innerText.replace(parent.innerText, '').replace(/\s+/g, ' ').trim();
         if (/[A-Za-z]{2,}.*\s.*[A-Za-z]{2,}/.test(text)) break;
         box = box.parentElement;
       }
