@@ -26,11 +26,24 @@ const retries = Number(opt.retries);
 const injectSrc = readFileSync(join(here, "inject.js"), "utf8");
 
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-const context = await chromium.launchPersistentContext(resolve(opt.profile), {
+const launchOpts = {
   headless: opt.headless,
   viewport: { width: 900, height: 760 },
   ...(proxy ? { proxy: { server: proxy } } : {}),
-});
+};
+// Playwright 用ブラウザが無ければ、PC に入っている Edge / Chrome を使う
+let context;
+for (const channel of [undefined, "msedge", "chrome"]) {
+  try {
+    context = await chromium.launchPersistentContext(resolve(opt.profile), { ...launchOpts, ...(channel ? { channel } : {}) });
+    break;
+  } catch (e) {
+    if (channel === "chrome") {
+      console.error("ブラウザを起動できませんでした。Microsoft Edge か Google Chrome をインストールしてください。");
+      throw e;
+    }
+  }
+}
 await context.addInitScript(injectSrc);
 
 if (opt["block-ads"]) {

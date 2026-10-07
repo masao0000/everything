@@ -15,8 +15,9 @@ if errorlevel 1 (
 if not exist node_modules\playwright (
   echo 初回の準備中です（数分かかります）...
   call npm install || goto :err
-  call npx playwright install chromium || goto :err
 )
+rem ブラウザの用意（済んでいれば一瞬で終わる。失敗しても Edge で動く）
+call npx playwright install chromium
 
 node bot.mjs --levels 500
 pause
