@@ -2,7 +2,15 @@
 
 [まち針ゲーム (arealme.com/coreball)](https://www.arealme.com/coreball/ja/) を Playwright で自動プレイし、レベルを進めます。
 
-## 使い方
+## かんたん起動（ダブルクリック）
+
+1. [Node.js](https://nodejs.org/ja) の「LTS」をインストール（最初の 1 回だけ）
+2. このフォルダの起動ファイルをダブルクリック
+   - Windows: `start-windows.bat`
+   - Mac: `start-mac.command`（初回は右クリック →「開く」）
+3. 初回だけ準備に数分かかり、その後ブラウザが開いて自動プレイが始まります。黒い画面を閉じると終了します。
+
+## 使い方（コマンド）
 
 ```bash
 cd coreball-bot
