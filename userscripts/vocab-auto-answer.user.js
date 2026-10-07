@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vocab Auto Answer
 // @namespace    https://github.com/masao0000/everything
-// @version      1.1.0
+// @version      1.2.0
 // @description  英語の空所補充4択問題を読み取り、Gemini API(無料枠)で正解を判定して自動選択する
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -62,8 +62,12 @@
   }
 
   function askGemini(questions) {
-    const apiKey = GM_getValue('apiKey', '');
-    if (!apiKey) throw new Error('APIキー未設定（Tampermonkeyメニューから設定）');
+    let apiKey = GM_getValue('apiKey', '');
+    if (!apiKey) {
+      apiKey = (prompt('Gemini APIキーを入力 (https://aistudio.google.com/apikey で無料発行)') || '').trim();
+      if (!apiKey) throw new Error('APIキーが入力されませんでした');
+      GM_setValue('apiKey', apiKey);
+    }
     const body = questions.map((q, i) =>
       `Q${i + 1}: ${q.text}\n` + q.labels.map((l, j) => `  ${j}: ${l}`).join('\n')).join('\n\n');
     return new Promise((resolve, reject) => {
@@ -107,6 +111,14 @@
       alert(e.message);
     }
   }
+
+  // 画面右下の「解答」ボタン
+  const btn = document.createElement('button');
+  btn.textContent = '解答';
+  btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:10px 16px;' +
+    'background:#e53935;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;';
+  btn.addEventListener('click', run);
+  document.body.appendChild(btn);
 
   // Alt+A でも実行
   document.addEventListener('keydown', (e) => {
