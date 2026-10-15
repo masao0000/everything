@@ -70,24 +70,42 @@
   let rawPrev = -1;
   let rawDt = FRAME_MS; // 実際の画面のフレーム間隔 (平均)
   let quantized = false;
-  function quantizeTs(raw) {
-    if (raw !== rawPrev) {
-      if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
-      rawPrev = raw;
-    }
-    // 120Hz / 144Hz などの画面でも 1/60 秒刻みにそろえる (ゲーム内の時間は 0 か 1/60 秒単位で進む)
+  let phaseShift = 0; // 次の 1 歩に足す端数 (位相ずらし用, ms)
+  let lastK = null; // 直前に進めた 1/60 秒刻みの番号
+  let curRaw = -1;
+  // 1 フレーム分の時刻を決める。null = このフレームはゲームに渡さない
+  function frameTs(raw) {
+    if (raw === curRaw) return curTs; // 同じフレームの別コールバック
+    if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
+    rawPrev = raw;
     quantized = bot.quantize !== false;
-    return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
+    if (!quantized) return raw;
+    // 120Hz / 144Hz などの画面でも 1/60 秒刻みにそろえる。
+    // 前と同じ刻みの新しいフレームはゲームに渡さず次へ回す (渡すとゲームは経過 0 で
+    // update し、クリックをそこで消費するため、影の回転関数とずれる)。
+    const k = Math.round(raw / FRAME_MS);
+    if (k === lastK) return null;
+    lastK = k;
+    // 描画が詰まってフレームを飛ばしても、ゲームの時刻は 1 刻みだけ進める
+    // (2 刻み分を 1 回で進めると、発射で逆回転するレベルなどで先読みとずれる)。
+    const ts = curTs < 0 ? k * TICK : curTs + TICK + phaseShift;
+    phaseShift = 0;
+    return ts;
   }
   window.requestAnimationFrame = (cb) =>
-    origRaf((rawTs) => {
+    origRaf(function tick(rawTs) {
       // 60Hz 画面では、ゲームに渡す時刻を等間隔 (1/60 秒よりわずかに長い) にそろえる。
       // 玉が刺さるのは経過時間の合計が 50ms に達したフレームなので、実時間の揺らぎで
       // 3 フレーム目か 4 フレーム目かがぶれる。これを毎回 3 フレーム目に固定する。
-      const ts = quantizeTs(rawTs);
-      if (ts !== curTs) {
+      const ts = frameTs(rawTs);
+      if (ts === null) {
+        origRaf(tick);
+        return;
+      }
+      if (rawTs !== curRaw) {
         prevTs = curTs;
         curTs = ts;
+        curRaw = rawTs;
       }
       drewThisTick = false;
       cb(ts);
@@ -183,6 +201,7 @@
   let inFlight = null; // { ts, count, frames }
   const landK = []; // 実際に何フレーム後に刺さったかの記録 (直近)
   let waitingSince = 0;
+  let lastShiftAt = 0;
 
   function onFrame(ts) {
     const canvas = document.getElementById(STAGE_ID);
@@ -345,8 +364,21 @@
     const baseMargin = exact ? bot.exactMargin : bot.margin;
     const margin = Math.max(bot.minMargin, baseMargin - Math.floor(waited / 1500));
 
-    // 保険: 5 秒撃てなければ (回転停止などで判定が詰まった場合) 撃つ
-    if ((clearance > hitAngle + margin && packOk) || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    const ok = clearance > hitAngle + margin && packOk;
+    // 回転と針の配置が周期的に一致するレベルでは、1/60 秒刻みの時刻だと着弾位置が
+    // 毎周期同じになり、永久に撃てないことがある。しばらく撃てなければゲームに渡す
+    // 時刻を端数フレームだけずらし、着弾位置の並びを変える (次フレームの dt が伸びる)。
+    if (!ok && quantized && waited > 700 && ts - lastShiftAt > 700) {
+      phaseShift = FRAME_MS * 0.37;
+      lastShiftAt = ts;
+      return;
+    }
+
+    // 保険: 長く撃てなければ (回転停止などで判定が詰まった場合) 撃つ。
+    // 回転が遅いレベルでは穴が着弾点に来るまで 1 周 (5 秒以上) かかるので、1 周半は待つ。
+    const turnMs = Math.abs(omega) > 1e-4 ? 360 / Math.abs(omega) : Infinity;
+    const giveUp = Math.min(20000, Math.max(5000, turnMs * 1.5));
+    if (ok || waited > giveUp) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {
