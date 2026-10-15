@@ -82,6 +82,7 @@ window.__cbStandalone = true;
   let rawPrev = -1;
   let rawDt = FRAME_MS; // \u5b9f\u969b\u306e\u753b\u9762\u306e\u30d5\u30ec\u30fc\u30e0\u9593\u9694 (\u5e73\u5747)
   let quantized = false;
+  let phaseShift = 0; // \u6642\u523b\u306b\u8db3\u3059\u7aef\u6570 (\u4f4d\u76f8\u305a\u3089\u3057\u7528, ms)
   function quantizeTs(raw) {
     if (raw !== rawPrev) {
       if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
@@ -89,17 +90,26 @@ window.__cbStandalone = true;
     }
     // 120Hz / 144Hz \u306a\u3069\u306e\u753b\u9762\u3067\u3082 1/60 \u79d2\u523b\u307f\u306b\u305d\u308d\u3048\u308b (\u30b2\u30fc\u30e0\u5185\u306e\u6642\u9593\u306f 0 \u304b 1/60 \u79d2\u5358\u4f4d\u3067\u9032\u3080)
     quantized = bot.quantize !== false;
-    return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
+    return quantized ? Math.round(raw / FRAME_MS) * TICK + phaseShift : raw;
   }
+  let curRaw = -1;
   window.requestAnimationFrame = (cb) =>
-    origRaf((rawTs) => {
+    origRaf(function tick(rawTs) {
       // 60Hz \u753b\u9762\u3067\u306f\u3001\u30b2\u30fc\u30e0\u306b\u6e21\u3059\u6642\u523b\u3092\u7b49\u9593\u9694 (1/60 \u79d2\u3088\u308a\u308f\u305a\u304b\u306b\u9577\u3044) \u306b\u305d\u308d\u3048\u308b\u3002
       // \u7389\u304c\u523a\u3055\u308b\u306e\u306f\u7d4c\u904e\u6642\u9593\u306e\u5408\u8a08\u304c 50ms \u306b\u9054\u3057\u305f\u30d5\u30ec\u30fc\u30e0\u306a\u306e\u3067\u3001\u5b9f\u6642\u9593\u306e\u63fa\u3089\u304e\u3067
       // 3 \u30d5\u30ec\u30fc\u30e0\u76ee\u304b 4 \u30d5\u30ec\u30fc\u30e0\u76ee\u304b\u304c\u3076\u308c\u308b\u3002\u3053\u308c\u3092\u6bce\u56de 3 \u30d5\u30ec\u30fc\u30e0\u76ee\u306b\u56fa\u5b9a\u3059\u308b\u3002
       const ts = quantizeTs(rawTs);
+      // \u91cf\u5b50\u5316\u3067\u524d\u306e\u30d5\u30ec\u30fc\u30e0\u3068\u540c\u3058\u6642\u523b\u306b\u306a\u3063\u305f\u65b0\u3057\u3044\u30d5\u30ec\u30fc\u30e0 (120Hz \u753b\u9762\u3084\u63cf\u753b\u306e\u63fa\u3089\u304e) \u306f
+      // \u30b2\u30fc\u30e0\u306b\u6e21\u3055\u305a\u6b21\u306e\u30d5\u30ec\u30fc\u30e0\u3078\u56de\u3059\u3002\u6e21\u3059\u3068\u30b2\u30fc\u30e0\u306f\u7d4c\u904e 0 \u3067 update \u3057\u3001\u30af\u30ea\u30c3\u30af\u3092
+      // \u305d\u3053\u3067\u6d88\u8cbb\u3059\u308b\u305f\u3081\u3001\u5f71\u306e\u56de\u8ee2\u95a2\u6570\u3068\u305a\u308c\u308b\u3002
+      if (ts === curTs && rawTs !== curRaw) {
+        origRaf(tick);
+        return;
+      }
       if (ts !== curTs) {
         prevTs = curTs;
         curTs = ts;
+        curRaw = rawTs;
       }
       drewThisTick = false;
       cb(ts);
@@ -195,6 +205,7 @@ window.__cbStandalone = true;
   let inFlight = null; // { ts, count, frames }
   const landK = []; // \u5b9f\u969b\u306b\u4f55\u30d5\u30ec\u30fc\u30e0\u5f8c\u306b\u523a\u3055\u3063\u305f\u304b\u306e\u8a18\u9332 (\u76f4\u8fd1)
   let waitingSince = 0;
+  let lastShiftAt = 0;
 
   function onFrame(ts) {
     const canvas = document.getElementById(STAGE_ID);
@@ -357,8 +368,18 @@ window.__cbStandalone = true;
     const baseMargin = exact ? bot.exactMargin : bot.margin;
     const margin = Math.max(bot.minMargin, baseMargin - Math.floor(waited / 1500));
 
+    const ok = clearance > hitAngle + margin && packOk;
+    // \u56de\u8ee2\u3068\u91dd\u306e\u914d\u7f6e\u304c\u5468\u671f\u7684\u306b\u4e00\u81f4\u3059\u308b\u30ec\u30d9\u30eb\u3067\u306f\u30011/60 \u79d2\u523b\u307f\u306e\u6642\u523b\u3060\u3068\u7740\u5f3e\u4f4d\u7f6e\u304c
+    // \u6bce\u5468\u671f\u540c\u3058\u306b\u306a\u308a\u3001\u6c38\u4e45\u306b\u6483\u3066\u306a\u3044\u3053\u3068\u304c\u3042\u308b\u3002\u3057\u3070\u3089\u304f\u6483\u3066\u306a\u3051\u308c\u3070\u30b2\u30fc\u30e0\u306b\u6e21\u3059
+    // \u6642\u523b\u3092\u7aef\u6570\u30d5\u30ec\u30fc\u30e0\u3060\u3051\u305a\u3089\u3057\u3001\u7740\u5f3e\u4f4d\u7f6e\u306e\u4e26\u3073\u3092\u5909\u3048\u308b (\u6b21\u30d5\u30ec\u30fc\u30e0\u306e dt \u304c\u4f38\u3073\u308b)\u3002
+    if (!ok && quantized && waited > 700 && ts - lastShiftAt > 700) {
+      phaseShift += FRAME_MS * 0.37;
+      lastShiftAt = ts;
+      return;
+    }
+
     // \u4fdd\u967a: 5 \u79d2\u6483\u3066\u306a\u3051\u308c\u3070 (\u56de\u8ee2\u505c\u6b62\u306a\u3069\u3067\u5224\u5b9a\u304c\u8a70\u307e\u3063\u305f\u5834\u5408) \u6483\u3064
-    if ((clearance > hitAngle + margin && packOk) || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    if (ok || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {

@@ -70,6 +70,7 @@
   let rawPrev = -1;
   let rawDt = FRAME_MS; // 実際の画面のフレーム間隔 (平均)
   let quantized = false;
+  let phaseShift = 0; // 時刻に足す端数 (位相ずらし用, ms)
   function quantizeTs(raw) {
     if (raw !== rawPrev) {
       if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
@@ -77,17 +78,26 @@
     }
     // 120Hz / 144Hz などの画面でも 1/60 秒刻みにそろえる (ゲーム内の時間は 0 か 1/60 秒単位で進む)
     quantized = bot.quantize !== false;
-    return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
+    return quantized ? Math.round(raw / FRAME_MS) * TICK + phaseShift : raw;
   }
+  let curRaw = -1;
   window.requestAnimationFrame = (cb) =>
-    origRaf((rawTs) => {
+    origRaf(function tick(rawTs) {
       // 60Hz 画面では、ゲームに渡す時刻を等間隔 (1/60 秒よりわずかに長い) にそろえる。
       // 玉が刺さるのは経過時間の合計が 50ms に達したフレームなので、実時間の揺らぎで
       // 3 フレーム目か 4 フレーム目かがぶれる。これを毎回 3 フレーム目に固定する。
       const ts = quantizeTs(rawTs);
+      // 量子化で前のフレームと同じ時刻になった新しいフレーム (120Hz 画面や描画の揺らぎ) は
+      // ゲームに渡さず次のフレームへ回す。渡すとゲームは経過 0 で update し、クリックを
+      // そこで消費するため、影の回転関数とずれる。
+      if (ts === curTs && rawTs !== curRaw) {
+        origRaf(tick);
+        return;
+      }
       if (ts !== curTs) {
         prevTs = curTs;
         curTs = ts;
+        curRaw = rawTs;
       }
       drewThisTick = false;
       cb(ts);
@@ -183,6 +193,7 @@
   let inFlight = null; // { ts, count, frames }
   const landK = []; // 実際に何フレーム後に刺さったかの記録 (直近)
   let waitingSince = 0;
+  let lastShiftAt = 0;
 
   function onFrame(ts) {
     const canvas = document.getElementById(STAGE_ID);
@@ -345,8 +356,18 @@
     const baseMargin = exact ? bot.exactMargin : bot.margin;
     const margin = Math.max(bot.minMargin, baseMargin - Math.floor(waited / 1500));
 
+    const ok = clearance > hitAngle + margin && packOk;
+    // 回転と針の配置が周期的に一致するレベルでは、1/60 秒刻みの時刻だと着弾位置が
+    // 毎周期同じになり、永久に撃てないことがある。しばらく撃てなければゲームに渡す
+    // 時刻を端数フレームだけずらし、着弾位置の並びを変える (次フレームの dt が伸びる)。
+    if (!ok && quantized && waited > 700 && ts - lastShiftAt > 700) {
+      phaseShift += FRAME_MS * 0.37;
+      lastShiftAt = ts;
+      return;
+    }
+
     // 保険: 5 秒撃てなければ (回転停止などで判定が詰まった場合) 撃つ
-    if ((clearance > hitAngle + margin && packOk) || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    if (ok || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {
