@@ -1,0 +1,12 @@
+{
+  "name": "coreball-bot",
+  "private": true,
+  "type": "module",
+  "description": "まち針ゲーム (arealme coreball) 自動プレイツール",
+  "scripts": {
+    "start": "node bot.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}
