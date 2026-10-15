@@ -366,8 +366,11 @@
       return;
     }
 
-    // 保険: 5 秒撃てなければ (回転停止などで判定が詰まった場合) 撃つ
-    if (ok || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    // 保険: 長く撃てなければ (回転停止などで判定が詰まった場合) 撃つ。
+    // 回転が遅いレベルでは穴が着弾点に来るまで 1 周 (5 秒以上) かかるので、1 周半は待つ。
+    const turnMs = Math.abs(omega) > 1e-4 ? 360 / Math.abs(omega) : Infinity;
+    const giveUp = Math.min(20000, Math.max(5000, turnMs * 1.5));
+    if (ok || waited > giveUp) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {

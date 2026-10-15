@@ -378,8 +378,11 @@ window.__cbStandalone = true;
       return;
     }
 
-    // \u4fdd\u967a: 5 \u79d2\u6483\u3066\u306a\u3051\u308c\u3070 (\u56de\u8ee2\u505c\u6b62\u306a\u3069\u3067\u5224\u5b9a\u304c\u8a70\u307e\u3063\u305f\u5834\u5408) \u6483\u3064
-    if (ok || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    // \u4fdd\u967a: \u9577\u304f\u6483\u3066\u306a\u3051\u308c\u3070 (\u56de\u8ee2\u505c\u6b62\u306a\u3069\u3067\u5224\u5b9a\u304c\u8a70\u307e\u3063\u305f\u5834\u5408) \u6483\u3064\u3002
+    // \u56de\u8ee2\u304c\u9045\u3044\u30ec\u30d9\u30eb\u3067\u306f\u7a74\u304c\u7740\u5f3e\u70b9\u306b\u6765\u308b\u307e\u3067 1 \u5468 (5 \u79d2\u4ee5\u4e0a) \u304b\u304b\u308b\u306e\u3067\u30011 \u5468\u534a\u306f\u5f85\u3064\u3002
+    const turnMs = Math.abs(omega) > 1e-4 ? 360 / Math.abs(omega) : Infinity;
+    const giveUp = Math.min(20000, Math.max(5000, turnMs * 1.5));
+    if (ok || waited > giveUp) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {
