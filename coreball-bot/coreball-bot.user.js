@@ -87,7 +87,8 @@ window.__cbStandalone = true;
       if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
       rawPrev = raw;
     }
-    quantized = bot.quantize !== false && rawDt > 15.5 && rawDt < 18;
+    // 120Hz / 144Hz \u306a\u3069\u306e\u753b\u9762\u3067\u3082 1/60 \u79d2\u523b\u307f\u306b\u305d\u308d\u3048\u308b (\u30b2\u30fc\u30e0\u5185\u306e\u6642\u9593\u306f 0 \u304b 1/60 \u79d2\u5358\u4f4d\u3067\u9032\u3080)
+    quantized = bot.quantize !== false;
     return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
   }
   window.requestAnimationFrame = (cb) =>
@@ -303,7 +304,7 @@ window.__cbStandalone = true;
         let rot;
         if (exact) {
           const extra = [];
-          for (let j = 0; j < delay + k; j++) extra.push([x, E, frameDt / FRAME_MS, j === delay]);
+          for (let j = 0; j < delay + k; j++) extra.push([x, E, (quantized ? TICK : frameDt) / FRAME_MS, j === delay]);
           rot = replay(shadow.hist, extra) - base;
         } else {
           rot = omega * (delay + k) * frameDt;

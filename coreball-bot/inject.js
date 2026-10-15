@@ -75,7 +75,8 @@
       if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
       rawPrev = raw;
     }
-    quantized = bot.quantize !== false && rawDt > 15.5 && rawDt < 18;
+    // 120Hz / 144Hz などの画面でも 1/60 秒刻みにそろえる (ゲーム内の時間は 0 か 1/60 秒単位で進む)
+    quantized = bot.quantize !== false;
     return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
   }
   window.requestAnimationFrame = (cb) =>
@@ -291,7 +292,7 @@
         let rot;
         if (exact) {
           const extra = [];
-          for (let j = 0; j < delay + k; j++) extra.push([x, E, frameDt / FRAME_MS, j === delay]);
+          for (let j = 0; j < delay + k; j++) extra.push([x, E, (quantized ? TICK : frameDt) / FRAME_MS, j === delay]);
           rot = replay(shadow.hist, extra) - base;
         } else {
           rot = omega * (delay + k) * frameDt;
