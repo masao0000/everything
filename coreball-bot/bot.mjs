@@ -14,7 +14,7 @@ const { values: opt } = parseArgs({
     url: { type: "string", default: "https://www.arealme.com/coreball/ja/" },
     levels: { type: "string", default: "10" }, // 何レベル進めるか
     retries: { type: "string", default: "3" }, // 同じレベルで失敗してよい回数
-    margin: { type: "string", default: "1" }, // 安全マージン (度)。大きいほど慎重だが密集レベルで詰まりやすい
+    margin: { type: "string", default: "0.3" }, // 安全マージン (度)。大きいほど慎重だが密集レベルで詰まりやすい
     profile: { type: "string", default: join(here, "profile") }, // 進行状況の保存先
     headless: { type: "boolean", default: false },
     "block-ads": { type: "boolean", default: true },

@@ -33,8 +33,8 @@ window.__cbStandalone = true;
     enabled: false,
     auto: true, // \u81ea\u52d5\u30d7\u30ec\u30a4\u306e ON/OFF (\u753b\u9762\u53f3\u4e0a\u306e\u30dc\u30bf\u30f3 or\u300cA\u300d\u30ad\u30fc\u3067\u5207\u66ff)
     margin: 3, // \u5f53\u305f\u308a\u5224\u5b9a\u306e\u95be\u5024\u306b\u8db3\u3059\u5b89\u5168\u30de\u30fc\u30b8\u30f3 (\u5ea6, \u7dda\u5f62\u4e88\u6e2c\u6642)
-    exactMargin: 1, // \u540c\u4e0a (\u6b63\u78ba\u306a\u4e88\u6e2c\u6642)
-    minMargin: 0.5,
+    exactMargin: 0.3, // \u540c\u4e0a (\u6b63\u78ba\u306a\u4e88\u6e2c\u6642)
+    minMargin: 0.1,
     results: [], // { result: "pass" | "fail", level, shots, model }
     shots: 0,
     debug: false,
@@ -78,8 +78,24 @@ window.__cbStandalone = true;
   let curTs = -1;
   let prevTs = -1;
   const origRaf = window.requestAnimationFrame.bind(window);
+  const TICK = FRAME_MS + 1e-4;
+  let rawPrev = -1;
+  let rawDt = FRAME_MS; // \u5b9f\u969b\u306e\u753b\u9762\u306e\u30d5\u30ec\u30fc\u30e0\u9593\u9694 (\u5e73\u5747)
+  let quantized = false;
+  function quantizeTs(raw) {
+    if (raw !== rawPrev) {
+      if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
+      rawPrev = raw;
+    }
+    quantized = bot.quantize !== false && rawDt > 15.5 && rawDt < 18;
+    return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
+  }
   window.requestAnimationFrame = (cb) =>
-    origRaf((ts) => {
+    origRaf((rawTs) => {
+      // 60Hz \u753b\u9762\u3067\u306f\u3001\u30b2\u30fc\u30e0\u306b\u6e21\u3059\u6642\u523b\u3092\u7b49\u9593\u9694 (1/60 \u79d2\u3088\u308a\u308f\u305a\u304b\u306b\u9577\u3044) \u306b\u305d\u308d\u3048\u308b\u3002
+      // \u7389\u304c\u523a\u3055\u308b\u306e\u306f\u7d4c\u904e\u6642\u9593\u306e\u5408\u8a08\u304c 50ms \u306b\u9054\u3057\u305f\u30d5\u30ec\u30fc\u30e0\u306a\u306e\u3067\u3001\u5b9f\u6642\u9593\u306e\u63fa\u3089\u304e\u3067
+      // 3 \u30d5\u30ec\u30fc\u30e0\u76ee\u304b 4 \u30d5\u30ec\u30fc\u30e0\u76ee\u304b\u304c\u3076\u308c\u308b\u3002\u3053\u308c\u3092\u6bce\u56de 3 \u30d5\u30ec\u30fc\u30e0\u76ee\u306b\u56fa\u5b9a\u3059\u308b\u3002
+      const ts = quantizeTs(rawTs);
       if (ts !== curTs) {
         prevTs = curTs;
         curTs = ts;
@@ -111,6 +127,9 @@ window.__cbStandalone = true;
   // \u30ec\u30d9\u30eb\u958b\u59cb: config.round = \u56de\u8ee2\u95a2\u6570\u30d5\u30a1\u30af\u30c8\u30ea
   hookGlobal("COREBALL_FN_START_GAME", (config) => {
     startRound(config && typeof config.round === "function" ? config.round : null);
+    roundQueue = config && typeof config.queueCount === "number" ? config.queueCount : 0;
+    roundInitial = config && Array.isArray(config.childs) ? config.childs.length : 0;
+    roundShots = 0;
   });
   // \u30ec\u30d9\u30eb\u7d42\u4e86: (result, level)
   hookGlobal("COREBALL_FN_STOP_GAME", (result, level) => {
@@ -121,6 +140,9 @@ window.__cbStandalone = true;
   // hist: \u30b2\u30fc\u30e0\u304c\u56de\u8ee2\u95a2\u6570\u3092\u547c\u3093\u3060\u3068\u304d\u306e\u5f15\u6570 [x, E, frameFactor, clicked] \u306e\u5c65\u6b74
   let shadow = null; // { factory, hist, offset, ok, now }
   let clickPending = false;
+  let roundQueue = 0; // \u3053\u306e\u30ec\u30d9\u30eb\u3067\u6483\u3064\u7389\u306e\u7dcf\u6570
+  let roundShots = 0; // \u3053\u306e\u30ec\u30d9\u30eb\u3067\u6483\u3063\u305f\u6570
+  let roundInitial = 0; // \u6700\u521d\u304b\u3089\u523a\u3055\u3063\u3066\u3044\u308b\u91dd\u306e\u6570
 
   function startRound(factory) {
     shadow = factory ? { factory, hist: [], offset: null, ok: true, now: 0 } : null;
@@ -169,7 +191,8 @@ window.__cbStandalone = true;
   let omega = 0; // \u5ea6/ms (\u7dda\u5f62\u4e88\u6e2c\u7528)
   let samples = 0; // \u9023\u7d9a\u3057\u3066\u89b3\u6e2c\u3067\u304d\u305f\u30d5\u30ec\u30fc\u30e0\u6570
   let frameDt = FRAME_MS;
-  let inFlight = null; // { ts, count }
+  let inFlight = null; // { ts, count, frames }
+  const landK = []; // \u5b9f\u969b\u306b\u4f55\u30d5\u30ec\u30fc\u30e0\u5f8c\u306b\u523a\u3055\u3063\u305f\u304b\u306e\u8a18\u9332 (\u76f4\u8fd1)
   let waitingSince = 0;
 
   function onFrame(ts) {
@@ -231,7 +254,15 @@ window.__cbStandalone = true;
 
     // \u767a\u5c04\u6e08\u307f\u306e\u7389\u304c\u523a\u3055\u308b\u307e\u3067 (= \u91dd\u304c\u5897\u3048\u308b\u307e\u3067) \u5f85\u3064
     if (inFlight) {
-      if (angles.length > inFlight.count || ts - inFlight.ts > 300) inFlight = null;
+      inFlight.frames++;
+      if (angles.length > inFlight.count) {
+        // \u523a\u3055\u3063\u305f\u30d5\u30ec\u30fc\u30e0\u6570\u3092\u8a18\u9332 (\u7740\u5f3e\u30bf\u30a4\u30df\u30f3\u30b0\u306e\u63fa\u3089\u304e\u3092\u5b66\u7fd2\u3059\u308b)
+        if (inFlight.count > 0) {
+          landK.push(inFlight.frames);
+          if (landK.length > 6) landK.shift();
+        }
+        inFlight = null;
+      } else if (ts - inFlight.ts > 300) inFlight = null;
       else return;
     }
 
@@ -255,8 +286,14 @@ window.__cbStandalone = true;
 
     // \u7389\u306f\u6b21\u30d5\u30ec\u30fc\u30e0\u304b\u3089\u98db\u3073\u59cb\u3081\u3001\u7d4c\u904e\u6642\u9593\u304c 50ms \u306b\u9054\u3057\u305f\u30d5\u30ec\u30fc\u30e0\u3067\u523a\u3055\u308b\u3002
     // \u30d5\u30ec\u30fc\u30e0\u6642\u9593\u306e\u63fa\u3089\u304e\u3067\u524d\u5f8c\u3059\u308b\u306e\u3067\u3001\u5019\u88dc\u306e\u30d5\u30ec\u30fc\u30e0\u6570\u3059\u3079\u3066\u3067\u5b89\u5168\u304b\u78ba\u8a8d\u3059\u308b\u3002
-    const kMin = Math.max(1, Math.floor(FLIGHT_MS / frameDt));
-    const kMax = Math.ceil(FLIGHT_MS / frameDt) + 1;
+    // \u76f4\u8fd1\u306e\u7740\u5f3e\u304c\u6bce\u56de\u540c\u3058\u30d5\u30ec\u30fc\u30e0\u6570\u306a\u3089\u3001\u305d\u308c\u3060\u3051\u3092\u78ba\u8a8d\u3059\u308b (\u5bc6\u96c6\u30ec\u30d9\u30eb\u3067\u9699\u9593\u3092\u5e83\u304f\u4f7f\u3048\u308b)
+    // \u7d4c\u904e\u6642\u9593\u306e\u5408\u8a08\u304c 50ms \u306b\u9054\u3057\u305f\u30d5\u30ec\u30fc\u30e0\u3067\u523a\u3055\u308b\u300250/\u30d5\u30ec\u30fc\u30e0\u6642\u9593 \u304c\u6574\u6570\u306b\u8fd1\u3044\u3068\u304d\u3060\u3051\u524d\u5f8c 2 \u901a\u308a\u3092\u8003\u3048\u308b
+    const q = FLIGHT_MS / frameDt;
+    const near = Math.abs(q - Math.round(q)) < 0.08;
+    let kMin = Math.max(1, near ? Math.round(q) : Math.ceil(q));
+    let kMax = near ? kMin + 1 : kMin;
+    // \u6642\u523b\u3092\u305d\u308d\u3048\u3066\u3044\u308b\u3068\u304d\u306f\u7740\u5f3e\u30d5\u30ec\u30fc\u30e0\u304c\u78ba\u5b9a\u3059\u308b (50 / 16.6667 \u2192 3 \u30d5\u30ec\u30fc\u30e0)
+    if (quantized) kMin = kMax = Math.ceil(FLIGHT_MS / TICK);
     const [x, E] = speedRatio();
     // delay \u30d5\u30ec\u30fc\u30e0\u5f85\u3063\u3066\u304b\u3089\u6483\u3063\u305f\u5834\u5408\u306e\u3001\u7740\u5f3e\u6642\u306e\u6700\u5c0f\u96e2\u89d2
     const clearanceAt = (delay) => {
@@ -272,10 +309,45 @@ window.__cbStandalone = true;
           rot = omega * (delay + k) * frameDt;
         }
         for (const th of angles) c = Math.min(c, Math.abs(norm(th + rot - LAND_ANGLE)));
+        lastRot = rot;
       }
       return c;
     };
+    let lastRot = 0;
     const clearance = clearanceAt(0);
+
+    // \u8a70\u3081\u8fbc\u307f\u306e\u5148\u8aad\u307f: \u9699\u9593 G \u306b\u306f (floor(G/h) - 1) \u672c\u307e\u3067\u5165\u308b (h = \u6700\u5c0f\u9593\u9694)\u3002
+    // \u3053\u3053\u306b\u523a\u3059\u3068\u6b8b\u308a\u306e\u7389\u304c\u5165\u308a\u304d\u3089\u306a\u304f\u306a\u308b\u306a\u3089\u6483\u305f\u305a\u306b\u5f85\u3064\u3002
+    let packOk = true;
+    const remaining = roundQueue - roundShots; // \u3053\u306e 1 \u767a\u3092\u542b\u3080\u6b8b\u308a
+    if (exact && remaining > 1) {
+      const h = hitAngle + bot.exactMargin;
+      const cap = (g) => Math.max(0, Math.floor(g / h - 1e-9) - 1);
+      const pos = angles.map((th) => (((th + lastRot - LAND_ANGLE) % 360) + 360) % 360).sort((p, q) => p - q);
+      let capBefore = 0;
+      for (let i = 0; i < pos.length; i++) capBefore += cap(i ? pos[i] - pos[i - 1] : pos[0] + 360 - pos[pos.length - 1]);
+      // \u7740\u5f3e\u70b9 (0\u00b0) \u3092\u631f\u3080\u9699\u9593: \u6700\u5f8c\u306e\u91dd \u2192 360\u00b0\u30010\u00b0 \u2192 \u6700\u521d\u306e\u91dd
+      const a = 360 - pos[pos.length - 1];
+      const b = pos[0];
+      const capAfter = capBefore - cap(a + b) + cap(a) + cap(b);
+      // \u3082\u3068\u3082\u3068\u5165\u308a\u304d\u3089\u306a\u3044\u72b6\u6cc1\u306a\u3089\u5236\u9650\u3057\u306a\u3044 (\u3044\u3064\u3082\u901a\u308a\u6483\u3064)
+      if (capBefore >= remaining && capAfter < remaining - 1) packOk = false;
+
+      // \u4f59\u88d5\u304c\u5c11\u306a\u3044\u30ec\u30d9\u30eb (\u5e73\u5747\u9593\u9694 < \u6700\u5c0f\u9593\u9694\u306e 2 \u500d) \u3067\u306f\u3001\u6700\u5f8c\u306e\u672c\u6570\u3067\u5186\u3092\u7b49\u5206\u3057\u305f
+      // \u300c\u30de\u30b9\u76ee\u300d\u306b\u523a\u3059\u3002\u6700\u521d\u306e\u91dd\u3092\u30de\u30b9\u76ee\u306e\u57fa\u6e96\u306b\u3059\u308b\u3002\u521d\u671f\u914d\u7f6e\u304c\u30de\u30b9\u76ee\u306b\u4e57\u3089\u306a\u3044\u3068\u304d\u306f\u4f7f\u308f\u306a\u3044\u3002
+      const T = roundInitial + roundQueue;
+      const S = 360 / T;
+      const tol = (S - h) / 2;
+      if (T > 0 && S < 2 * h && tol > 0.2) {
+        const p0 = (((angles[0] + lastRot - LAND_ANGLE) % 360) + 360) % 360;
+        const off = (p) => {
+          const r = (((p - p0) % S) + S) % S;
+          return Math.min(r, S - r);
+        };
+        const onGrid = angles.every((th) => off((((th + lastRot - LAND_ANGLE) % 360) + 360) % 360) <= tol + 0.5);
+        if (onGrid) packOk = off(0) <= tol;
+      }
+    }
 
     if (!waitingSince) waitingSince = ts;
     // \u306a\u304b\u306a\u304b\u6483\u3066\u306a\u3044\u5bc6\u96c6\u30ec\u30d9\u30eb\u3067\u306f\u30de\u30fc\u30b8\u30f3\u3092\u5c11\u3057\u305a\u3064\u7de9\u3081\u308b
@@ -285,14 +357,15 @@ window.__cbStandalone = true;
     const margin = Math.max(bot.minMargin, baseMargin - Math.floor(waited / 1500));
 
     // \u4fdd\u967a: 5 \u79d2\u6483\u3066\u306a\u3051\u308c\u3070 (\u56de\u8ee2\u505c\u6b62\u306a\u3069\u3067\u5224\u5b9a\u304c\u8a70\u307e\u3063\u305f\u5834\u5408) \u6483\u3064
-    if (clearance > hitAngle + margin || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    if ((clearance > hitAngle + margin && packOk) || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {
     if (bot.debug) bot.log.push({ ts, count, clearance, hitAngle, exact, omega });
     bot.shots++;
+    roundShots++;
     clickPending = true; // \u30b2\u30fc\u30e0\u306f\u6b21\u306e\u30d5\u30ec\u30fc\u30e0\u3067\u300c\u30af\u30ea\u30c3\u30af\u3042\u308a\u300d\u3068\u3057\u3066\u56de\u8ee2\u95a2\u6570\u3092\u547c\u3076
-    inFlight = { ts, count };
+    inFlight = { ts, count, frames: 0 };
     waitingSince = 0;
     const ev = new KeyboardEvent("keydown", { key: " ", code: "Space", keyCode: 32, which: 32, bubbles: true });
     document.body.dispatchEvent(ev);

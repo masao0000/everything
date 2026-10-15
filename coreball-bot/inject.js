@@ -21,8 +21,8 @@
     enabled: false,
     auto: true, // 自動プレイの ON/OFF (画面右上のボタン or「A」キーで切替)
     margin: 3, // 当たり判定の閾値に足す安全マージン (度, 線形予測時)
-    exactMargin: 1, // 同上 (正確な予測時)
-    minMargin: 0.5,
+    exactMargin: 0.3, // 同上 (正確な予測時)
+    minMargin: 0.1,
     results: [], // { result: "pass" | "fail", level, shots, model }
     shots: 0,
     debug: false,
@@ -66,8 +66,24 @@
   let curTs = -1;
   let prevTs = -1;
   const origRaf = window.requestAnimationFrame.bind(window);
+  const TICK = FRAME_MS + 1e-4;
+  let rawPrev = -1;
+  let rawDt = FRAME_MS; // 実際の画面のフレーム間隔 (平均)
+  let quantized = false;
+  function quantizeTs(raw) {
+    if (raw !== rawPrev) {
+      if (rawPrev > 0) rawDt = rawDt * 0.95 + Math.min(raw - rawPrev, 100) * 0.05;
+      rawPrev = raw;
+    }
+    quantized = bot.quantize !== false && rawDt > 15.5 && rawDt < 18;
+    return quantized ? Math.round(raw / FRAME_MS) * TICK : raw;
+  }
   window.requestAnimationFrame = (cb) =>
-    origRaf((ts) => {
+    origRaf((rawTs) => {
+      // 60Hz 画面では、ゲームに渡す時刻を等間隔 (1/60 秒よりわずかに長い) にそろえる。
+      // 玉が刺さるのは経過時間の合計が 50ms に達したフレームなので、実時間の揺らぎで
+      // 3 フレーム目か 4 フレーム目かがぶれる。これを毎回 3 フレーム目に固定する。
+      const ts = quantizeTs(rawTs);
       if (ts !== curTs) {
         prevTs = curTs;
         curTs = ts;
@@ -99,6 +115,9 @@
   // レベル開始: config.round = 回転関数ファクトリ
   hookGlobal("COREBALL_FN_START_GAME", (config) => {
     startRound(config && typeof config.round === "function" ? config.round : null);
+    roundQueue = config && typeof config.queueCount === "number" ? config.queueCount : 0;
+    roundInitial = config && Array.isArray(config.childs) ? config.childs.length : 0;
+    roundShots = 0;
   });
   // レベル終了: (result, level)
   hookGlobal("COREBALL_FN_STOP_GAME", (result, level) => {
@@ -109,6 +128,9 @@
   // hist: ゲームが回転関数を呼んだときの引数 [x, E, frameFactor, clicked] の履歴
   let shadow = null; // { factory, hist, offset, ok, now }
   let clickPending = false;
+  let roundQueue = 0; // このレベルで撃つ玉の総数
+  let roundShots = 0; // このレベルで撃った数
+  let roundInitial = 0; // 最初から刺さっている針の数
 
   function startRound(factory) {
     shadow = factory ? { factory, hist: [], offset: null, ok: true, now: 0 } : null;
@@ -157,7 +179,8 @@
   let omega = 0; // 度/ms (線形予測用)
   let samples = 0; // 連続して観測できたフレーム数
   let frameDt = FRAME_MS;
-  let inFlight = null; // { ts, count }
+  let inFlight = null; // { ts, count, frames }
+  const landK = []; // 実際に何フレーム後に刺さったかの記録 (直近)
   let waitingSince = 0;
 
   function onFrame(ts) {
@@ -219,7 +242,15 @@
 
     // 発射済みの玉が刺さるまで (= 針が増えるまで) 待つ
     if (inFlight) {
-      if (angles.length > inFlight.count || ts - inFlight.ts > 300) inFlight = null;
+      inFlight.frames++;
+      if (angles.length > inFlight.count) {
+        // 刺さったフレーム数を記録 (着弾タイミングの揺らぎを学習する)
+        if (inFlight.count > 0) {
+          landK.push(inFlight.frames);
+          if (landK.length > 6) landK.shift();
+        }
+        inFlight = null;
+      } else if (ts - inFlight.ts > 300) inFlight = null;
       else return;
     }
 
@@ -243,8 +274,14 @@
 
     // 玉は次フレームから飛び始め、経過時間が 50ms に達したフレームで刺さる。
     // フレーム時間の揺らぎで前後するので、候補のフレーム数すべてで安全か確認する。
-    const kMin = Math.max(1, Math.floor(FLIGHT_MS / frameDt));
-    const kMax = Math.ceil(FLIGHT_MS / frameDt) + 1;
+    // 直近の着弾が毎回同じフレーム数なら、それだけを確認する (密集レベルで隙間を広く使える)
+    // 経過時間の合計が 50ms に達したフレームで刺さる。50/フレーム時間 が整数に近いときだけ前後 2 通りを考える
+    const q = FLIGHT_MS / frameDt;
+    const near = Math.abs(q - Math.round(q)) < 0.08;
+    let kMin = Math.max(1, near ? Math.round(q) : Math.ceil(q));
+    let kMax = near ? kMin + 1 : kMin;
+    // 時刻をそろえているときは着弾フレームが確定する (50 / 16.6667 → 3 フレーム)
+    if (quantized) kMin = kMax = Math.ceil(FLIGHT_MS / TICK);
     const [x, E] = speedRatio();
     // delay フレーム待ってから撃った場合の、着弾時の最小離角
     const clearanceAt = (delay) => {
@@ -260,10 +297,45 @@
           rot = omega * (delay + k) * frameDt;
         }
         for (const th of angles) c = Math.min(c, Math.abs(norm(th + rot - LAND_ANGLE)));
+        lastRot = rot;
       }
       return c;
     };
+    let lastRot = 0;
     const clearance = clearanceAt(0);
+
+    // 詰め込みの先読み: 隙間 G には (floor(G/h) - 1) 本まで入る (h = 最小間隔)。
+    // ここに刺すと残りの玉が入りきらなくなるなら撃たずに待つ。
+    let packOk = true;
+    const remaining = roundQueue - roundShots; // この 1 発を含む残り
+    if (exact && remaining > 1) {
+      const h = hitAngle + bot.exactMargin;
+      const cap = (g) => Math.max(0, Math.floor(g / h - 1e-9) - 1);
+      const pos = angles.map((th) => (((th + lastRot - LAND_ANGLE) % 360) + 360) % 360).sort((p, q) => p - q);
+      let capBefore = 0;
+      for (let i = 0; i < pos.length; i++) capBefore += cap(i ? pos[i] - pos[i - 1] : pos[0] + 360 - pos[pos.length - 1]);
+      // 着弾点 (0°) を挟む隙間: 最後の針 → 360°、0° → 最初の針
+      const a = 360 - pos[pos.length - 1];
+      const b = pos[0];
+      const capAfter = capBefore - cap(a + b) + cap(a) + cap(b);
+      // もともと入りきらない状況なら制限しない (いつも通り撃つ)
+      if (capBefore >= remaining && capAfter < remaining - 1) packOk = false;
+
+      // 余裕が少ないレベル (平均間隔 < 最小間隔の 2 倍) では、最後の本数で円を等分した
+      // 「マス目」に刺す。最初の針をマス目の基準にする。初期配置がマス目に乗らないときは使わない。
+      const T = roundInitial + roundQueue;
+      const S = 360 / T;
+      const tol = (S - h) / 2;
+      if (T > 0 && S < 2 * h && tol > 0.2) {
+        const p0 = (((angles[0] + lastRot - LAND_ANGLE) % 360) + 360) % 360;
+        const off = (p) => {
+          const r = (((p - p0) % S) + S) % S;
+          return Math.min(r, S - r);
+        };
+        const onGrid = angles.every((th) => off((((th + lastRot - LAND_ANGLE) % 360) + 360) % 360) <= tol + 0.5);
+        if (onGrid) packOk = off(0) <= tol;
+      }
+    }
 
     if (!waitingSince) waitingSince = ts;
     // なかなか撃てない密集レベルではマージンを少しずつ緩める
@@ -273,14 +345,15 @@
     const margin = Math.max(bot.minMargin, baseMargin - Math.floor(waited / 1500));
 
     // 保険: 5 秒撃てなければ (回転停止などで判定が詰まった場合) 撃つ
-    if (clearance > hitAngle + margin || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
+    if ((clearance > hitAngle + margin && packOk) || waited > 5000) fire(ts, angles.length, clearance, hitAngle, exact);
   }
 
   function fire(ts, count, clearance, hitAngle, exact) {
     if (bot.debug) bot.log.push({ ts, count, clearance, hitAngle, exact, omega });
     bot.shots++;
+    roundShots++;
     clickPending = true; // ゲームは次のフレームで「クリックあり」として回転関数を呼ぶ
-    inFlight = { ts, count };
+    inFlight = { ts, count, frames: 0 };
     waitingSince = 0;
     const ev = new KeyboardEvent("keydown", { key: " ", code: "Space", keyCode: 32, which: 32, bubbles: true });
     document.body.dispatchEvent(ev);
